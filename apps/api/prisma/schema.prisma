@@ -1,0 +1,11 @@
+// Data model (section 3 of the spec) lands here in a later step.
+// Scaffold only for now — no models yet.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
