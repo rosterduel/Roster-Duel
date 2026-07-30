@@ -1,5 +1,6 @@
+import { OVERTIME_PERIOD_SECONDS } from './constants';
 import { simulateGame } from './simulateGame';
-import { NbaPosition, PlayerRatingInput, TeamInput } from './types';
+import { GameResult, NbaPosition, PlayerRatingInput, TeamInput } from './types';
 
 function makeRoster(teamId: string, teamName: string, seedOffset: number): TeamInput {
   const positions: NbaPosition[] = ['PG', 'SG', 'SF', 'PF', 'C', '6MAN'];
@@ -86,5 +87,46 @@ describe('simulateGame', () => {
     expect(result.possessionLog.length).toBeGreaterThan(150);
     const teamIds = new Set(result.possessionLog.map((e) => e.offenseTeamId));
     expect(teamIds).toEqual(new Set(['A', 'B']));
+  });
+
+  it('never ends in a tie, playing real overtime periods instead of a coin flip', () => {
+    // Search deterministically for a seed whose regulation ends tied — with
+    // ~100 possessions/team this happens for a meaningful fraction of seeds,
+    // so a few hundred tries reliably finds one without flaking across runs.
+    let otResult: GameResult | undefined;
+    for (let seed = 0; seed < 3000 && !otResult; seed++) {
+      const result = simulateGame({ teamA, teamB, seed });
+      if (result.overtimePeriods > 0) otResult = result;
+    }
+
+    expect(otResult).toBeDefined();
+    const result = otResult!;
+
+    // The game must be decided — no tie-breaking coin flip.
+    expect(result.teamA.score).not.toBe(result.teamB.score);
+    expect(result.winner).toBe(result.teamA.score > result.teamB.score ? 'A' : 'B');
+
+    // At least one possession was actually played beyond regulation.
+    const otEvents = result.possessionLog.filter((e) => e.quarter > 4);
+    expect(otEvents.length).toBeGreaterThan(0);
+    for (const event of otEvents) {
+      expect(event.quarter).toBe(4 + result.overtimePeriods);
+      expect(event.periodSecondsRemaining).toBeGreaterThanOrEqual(0);
+      expect(event.periodSecondsRemaining).toBeLessThanOrEqual(OVERTIME_PERIOD_SECONDS);
+    }
+
+    // Box score totals still reconcile with OT possessions included.
+    const sumA = result.boxScore.teamA.reduce((s, l) => s + l.points, 0);
+    const sumB = result.boxScore.teamB.reduce((s, l) => s + l.points, 0);
+    expect(sumA).toBe(result.teamA.score);
+    expect(sumB).toBe(result.teamB.score);
+  });
+
+  it('reports overtimePeriods of 0 and no OT events for a game decided in regulation', () => {
+    // Seed 1 is asserted elsewhere to be a normal, non-tied final score.
+    const result = simulateGame({ teamA, teamB, seed: 1 });
+    expect(result.teamA.score).not.toBe(result.teamB.score);
+    expect(result.overtimePeriods).toBe(0);
+    expect(result.possessionLog.every((e) => e.quarter <= 4)).toBe(true);
   });
 });

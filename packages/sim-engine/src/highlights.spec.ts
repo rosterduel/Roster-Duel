@@ -5,7 +5,7 @@ function event(overrides: Partial<PossessionEvent>): PossessionEvent {
   return {
     possessionIndex: 0,
     offenseTeamId: 'A',
-    gameClockSeconds: 40,
+    periodSecondsRemaining: 40,
     quarter: 4,
     outcome: 'make_3',
     pointsScored: 3,
@@ -66,5 +66,15 @@ describe('buildHighlights score-context framing', () => {
 
     const [highlight] = buildHighlights(events, nameById, 1);
     expect(highlight.description).toContain('Tied');
+  });
+
+  it('labels overtime periods as OT / OT2 / OT3 instead of a 5th/6th/7th quarter', () => {
+    const [ot1] = buildHighlights([event({ shooterId: 'a-shooter', quarter: 5 })], nameById, 1);
+    const [ot2] = buildHighlights([event({ shooterId: 'a-shooter', quarter: 6 })], nameById, 1);
+    const [ot3] = buildHighlights([event({ shooterId: 'a-shooter', quarter: 7 })], nameById, 1);
+
+    expect(ot1.description).toContain('in the OT,');
+    expect(ot2.description).toContain('in the OT2,');
+    expect(ot3.description).toContain('in the OT3,');
   });
 });

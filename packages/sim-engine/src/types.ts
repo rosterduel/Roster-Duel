@@ -62,8 +62,9 @@ export type PossessionOutcomeType =
 export interface PossessionEvent {
   possessionIndex: number;
   offenseTeamId: string;
-  /** Seconds remaining in the whole game after this event. */
-  gameClockSeconds: number;
+  /** Seconds remaining in the current quarter/overtime period after this event. */
+  periodSecondsRemaining: number;
+  /** 1-4 for regulation quarters, 5+ for overtime periods (5 = OT1, 6 = OT2, ...). */
   quarter: number;
   outcome: PossessionOutcomeType;
   pointsScored: number;
@@ -87,7 +88,7 @@ export interface Highlight {
   playerName: string;
   description: string;
   leverageScore: number;
-  gameClockSeconds: number;
+  periodSecondsRemaining: number;
   quarter: number;
   outcome: PossessionOutcomeType;
   scoreAAfter: number;
@@ -110,4 +111,6 @@ export interface GameResult {
   };
   possessionLog: PossessionEvent[];
   highlights: Highlight[];
+  /** 0 if the game was decided in regulation, otherwise how many OT periods were played. */
+  overtimePeriods: number;
 }

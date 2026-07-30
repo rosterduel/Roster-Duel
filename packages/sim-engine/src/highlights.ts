@@ -1,4 +1,3 @@
-import { QUARTER_SECONDS } from './constants';
 import { Highlight, PossessionEvent } from './types';
 
 const ORDINALS: Record<number, string> = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
@@ -15,13 +14,13 @@ function formatClock(seconds: number): string {
 }
 
 function buildScoreContext(event: PossessionEvent): { clockLabel: string; scoreContext: string } {
-  const clockInQuarter = event.gameClockSeconds - (4 - event.quarter) * QUARTER_SECONDS;
-  const clockLabel = formatClock(clockInQuarter);
+  const clockLabel = formatClock(event.periodSecondsRemaining);
   // Framed relative to the offense team for this trip, not a fixed team A —
   // see the comment in simulateGame.ts for why.
   const margin = event.offenseMarginAfter;
   const marginLabel = margin === 0 ? 'Tied' : margin > 0 ? `Up ${margin}` : `Down ${Math.abs(margin)}`;
-  return { clockLabel, scoreContext: `${marginLabel} with ${clockLabel} left in the ${ordinal(event.quarter)},` };
+  const periodLabel = event.quarter <= 4 ? ordinal(event.quarter) : `OT${event.quarter - 4 > 1 ? event.quarter - 4 : ''}`;
+  return { clockLabel, scoreContext: `${marginLabel} with ${clockLabel} left in the ${periodLabel},` };
 }
 
 function describe(event: PossessionEvent, nameById: Map<string, string>): { description: string; playerId: string; playerName: string } {
@@ -92,7 +91,7 @@ export function buildHighlights(events: PossessionEvent[], nameById: Map<string,
       playerName,
       description,
       leverageScore: event.leverageScore,
-      gameClockSeconds: event.gameClockSeconds,
+      periodSecondsRemaining: event.periodSecondsRemaining,
       quarter: event.quarter,
       outcome: event.outcome,
       scoreAAfter: event.scoreA,

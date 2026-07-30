@@ -7,6 +7,7 @@ export const LEAGUE_AVG_PACE = 100;
 
 export const TOTAL_GAME_SECONDS = 48 * 60;
 export const QUARTER_SECONDS = TOTAL_GAME_SECONDS / 4;
+export const OVERTIME_PERIOD_SECONDS = 5 * 60;
 
 // Guards against runaway recursion when a team strings together repeated
 // offensive rebounds — astronomically unlikely to matter, just a safety cap.
