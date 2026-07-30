@@ -10,6 +10,7 @@
     "dev:web": "npm run dev -w apps/web",
     "dev:api": "npm run start:dev -w apps/api",
     "test:sim": "npm run test -w packages/sim-engine",
+    "demo:sim": "npm run demo -w packages/sim-engine",
     "seed": "ts-node scripts/seed.ts"
   },
   "devDependencies": {
