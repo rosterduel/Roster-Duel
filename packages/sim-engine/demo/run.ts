@@ -38,11 +38,13 @@ function printBoxScore(teamName: string, lines: PlayerBoxScoreLine[]): void {
 const seed = process.argv[2] ? Number(process.argv[2]) : Date.now();
 const result = simulateGame({ teamA: teamLegacy, teamB: teamDynasty, seed });
 
+const finalLabel = result.overtimePeriods > 0 ? `FINAL/${result.overtimePeriods > 1 ? `${result.overtimePeriods}OT` : 'OT'}` : 'FINAL';
+
 console.log('='.repeat(70));
 console.log(`RosterDuel sim-engine demo (seed ${seed})`);
 console.log('='.repeat(70));
 console.log(
-  `\nFINAL: ${result.teamA.teamName} ${result.teamA.score} — ${result.teamB.score} ${result.teamB.teamName}` +
+  `\n${finalLabel}: ${result.teamA.teamName} ${result.teamA.score} — ${result.teamB.score} ${result.teamB.teamName}` +
     ` (winner: ${result.winner === 'A' ? result.teamA.teamName : result.teamB.teamName})`,
 );
 
@@ -53,5 +55,17 @@ console.log('\nTOP 5 HIGHLIGHTS');
 result.highlights.forEach((h, i) => {
   console.log(`${i + 1}. ${h.description} (leverage ${(h.leverageScore * 100).toFixed(1)}%)`);
 });
+
+if (result.overtimePeriods > 0) {
+  console.log(`\nWent to ${result.overtimePeriods} overtime period(s) — regulation ended tied.`);
+  for (let period = 1; period <= result.overtimePeriods; period++) {
+    const otEvents = result.possessionLog.filter((e) => e.quarter === 4 + period);
+    const scoring = otEvents.filter((e) => e.pointsScored > 0);
+    console.log(
+      `  OT${period > 1 ? period : ''}: ${otEvents.length} possessions, ${scoring.length} scoring plays` +
+        (otEvents.length > 0 ? `, score at period end: ${otEvents[otEvents.length - 1].scoreA}-${otEvents[otEvents.length - 1].scoreB}` : ''),
+    );
+  }
+}
 
 console.log(`\n(${result.possessionLog.length} possessions simulated)`);
