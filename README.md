@@ -164,9 +164,16 @@ dataset or reason to compute a non-neutral value.
   app. You should be able to write and run sample-data box-score tests for
   it without Docker running at all.
 - `apps/api` depends on `@roster-duel/sim-engine` as a workspace package —
-  after changing sim-engine source, run `npm run build -w packages/sim-engine`
-  so apps/api picks up the change (it imports the built `dist/`, not the
-  TS source directly).
+  it imports the built `dist/`, not the TS source directly. `dist/` is
+  gitignored (it's a build artifact), so a root `postinstall` hook runs
+  `npm run build -w packages/sim-engine` automatically after every
+  `npm install`. If you ever see `Cannot find module '@roster-duel/sim-engine'`
+  or a cascade of `implicitly has an 'any' type` errors from anything that
+  imports it (`apps/api/scripts/verifySimEndToEnd.ts`,
+  `apps/api/src/sim/toTeamInput.ts`), that means `dist/` is missing or stale
+  — after changing sim-engine source, re-run
+  `npm run build -w packages/sim-engine` (or just `npm install` again) to
+  refresh it.
 - Redis is stood up now even though Phase 1 only needs friend-link matches
   (no random queue yet) — it's not wired into the draft-room flow until
   that's built.
