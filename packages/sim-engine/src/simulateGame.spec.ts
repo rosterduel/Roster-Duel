@@ -129,4 +129,34 @@ describe('simulateGame', () => {
     expect(result.overtimePeriods).toBe(0);
     expect(result.possessionLog.every((e) => e.quarter <= 4)).toBe(true);
   });
+
+  it('never lets offensive rebounds overrun the clock past a period boundary', () => {
+    // Regression test for a real bug: offensive rebounds add extra
+    // shot-clock trips within a possession without costing extra possession
+    // budget, so a possession-count-based loop can run more trips than the
+    // clock has seconds for. Every trip beyond that overrun used to get its
+    // clock clamped to the exact same frozen "0:00" instant, which (since
+    // win probability at zero time left depends only on score margin)
+    // produced multiple different plays with byte-for-byte identical
+    // leverage scores. Across a wide seed range, a period can end in exactly
+    // one trip at :00 remaining — never more.
+    for (let seed = 0; seed < 200; seed++) {
+      const result = simulateGame({ teamA, teamB, seed });
+      const eventsByPeriod = new Map<number, typeof result.possessionLog>();
+      for (const event of result.possessionLog) {
+        const list = eventsByPeriod.get(event.quarter) ?? [];
+        list.push(event);
+        eventsByPeriod.set(event.quarter, list);
+      }
+      for (const periodEvents of eventsByPeriod.values()) {
+        const clampedAtBuzzer = periodEvents.filter((e) => e.periodSecondsRemaining <= 0.001);
+        expect(clampedAtBuzzer.length).toBeLessThanOrEqual(1);
+        if (clampedAtBuzzer.length === 1) {
+          // The clamped trip must be the true last trip of that period, not a
+          // pile-up in the middle of the possession log.
+          expect(clampedAtBuzzer[0]).toBe(periodEvents[periodEvents.length - 1]);
+        }
+      }
+    }
+  });
 });

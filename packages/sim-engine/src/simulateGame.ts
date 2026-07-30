@@ -70,6 +70,18 @@ export function simulateGame(options: SimulateGameOptions): GameResult {
 
       let continuePossession = true;
       let trips = 0;
+      // A possession consumes exactly one secondsPerTrip's worth of game
+      // clock in total, no matter how many shot-clock trips it takes due to
+      // offensive rebounds — otherwise an o-reb-heavy game would run the
+      // clock past the period's real length (the outer possession loop is
+      // budget-based per spec's "possessions_per_team", not time-based), and
+      // every trip beyond that overrun would get its clock clamped to the
+      // exact same frozen instant, corrupting their leverage scores into
+      // duplicates. Sub-trips within a possession (o-reb extensions) get a
+      // small slice of that budget each; whichever trip actually ends the
+      // possession absorbs whatever's left, so the total is always exact.
+      let possessionSecondsUsed = 0;
+      const minSubIntervalSeconds = secondsPerTrip / MAX_TRIPS_PER_POSSESSION;
 
       while (continuePossession && trips < MAX_TRIPS_PER_POSSESSION) {
         // Leverage and highlight text are framed relative to whichever team is
@@ -85,7 +97,11 @@ export function simulateGame(options: SimulateGameOptions): GameResult {
         if (offense === 'A') scoreA += trip.points;
         else scoreB += trip.points;
 
-        periodElapsedSeconds += secondsPerTrip;
+        const willContinuePossession = trip.outcome === 'miss_off_reb';
+        const isFinalTripOfPossession = !willContinuePossession || trips === MAX_TRIPS_PER_POSSESSION - 1;
+        const subIntervalSeconds = isFinalTripOfPossession ? secondsPerTrip - possessionSecondsUsed : minSubIntervalSeconds;
+        periodElapsedSeconds += subIntervalSeconds;
+        possessionSecondsUsed += subIntervalSeconds;
         const afterClock = computeClock(periodElapsedSeconds);
 
         const marginAfterOffense = offense === 'A' ? scoreA - scoreB : scoreB - scoreA;
@@ -112,7 +128,7 @@ export function simulateGame(options: SimulateGameOptions): GameResult {
         });
 
         possessionIndex++;
-        continuePossession = trip.outcome === 'miss_off_reb';
+        continuePossession = willContinuePossession;
         trips++;
       }
 
