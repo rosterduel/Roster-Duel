@@ -1,5 +1,11 @@
-// Data model (section 3 of the spec) lands here in a later step.
-// Scaffold only for now — no models yet.
+// Data model — spec section 3 only (players / player_stats / player_ratings).
+//
+// Scoping decision: users / rosters / matches / game_results (spec section 4)
+// are deliberately NOT modeled here yet. They depend on design choices for
+// the draft flow and friend-link matchmaking (anonymous session identity,
+// room-code shape, WebSocket draft-room state) that haven't been made yet —
+// building them now would mean guessing at a schema before the feature that
+// drives its shape exists. They land with the draft UI / matchmaking step.
 
 generator client {
   provider = "prisma-client-js"
@@ -8,4 +14,75 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum Sport {
+  nba
+  nfl
+}
+
+// One row per player per sport, career-aggregated identity fields.
+model Player {
+  id              String  @id @default(uuid())
+  sport           Sport
+  name            String
+  // Not a Prisma enum: NBA (PG/SG/SF/PF/C/6MAN) and NFL (QB/RB/WR/...) use
+  // different position vocabularies, and this stays a plain string so a
+  // second sport's positions don't require a schema migration later —
+  // consistent with treating "sport" as a pluggable module (spec section 1).
+  primaryPosition String  @map("primary_position")
+  eraStartYear    Int     @map("era_start_year")
+  // Null for still-active players — no end year yet.
+  eraEndYear      Int?    @map("era_end_year")
+  isActive        Boolean @map("is_active")
+  // Deliberately left unpopulated in Phase 1 seed data — spec section 10's
+  // legal notes: names + stats only, no images/likeness.
+  photoUrl        String? @map("photo_url")
+
+  stats  PlayerStat[]
+  rating PlayerRating?
+
+  // Lets the seed script upsert idempotently (safe to re-run) instead of
+  // duplicating players on every run — spec doesn't define a natural key
+  // for players, so this is the seed pipeline's own choice, not spec-driven.
+  @@unique([sport, name])
+  @@map("players")
+}
+
+// Flexible per-player stat storage (avoids a 40-column table per sport).
+// stat_key examples: 'ppg','apg','rpg','spg','bpg','tov_pg','fg_pct',
+// 'three_pt_pct','three_pt_rate','ft_pct','ast_rate','reb_rate','stl_rate',
+// 'blk_rate'. scope examples: 'career','peak_3yr','last_season' — Phase 1
+// only populates 'career'.
+model PlayerStat {
+  id        String  @id @default(uuid())
+  playerId  String  @map("player_id")
+  player    Player  @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  statKey   String  @map("stat_key")
+  statValue Decimal @map("stat_value") @db.Decimal(8, 4)
+  scope     String
+
+  @@unique([playerId, statKey, scope])
+  @@map("player_stats")
+}
+
+// Precomputed composite ratings — recalculated offline (spec section 6),
+// never computed live during a draft or sim.
+model PlayerRating {
+  playerId String @id @map("player_id")
+  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  baseRating     Decimal  @map("base_rating") @db.Decimal(6, 2)
+  offenseRating  Decimal  @map("offense_rating") @db.Decimal(6, 2)
+  defenseRating  Decimal  @map("defense_rating") @db.Decimal(6, 2)
+  // Multiplies base_rating in crunch time (spec section 5.4). Not yet
+  // consumed by the sim engine — that mechanic is Phase 2 — but the column
+  // exists now per spec's schema so no migration is needed when it lands.
+  // Defaults to 1.0 (neutral) for every Phase 1 seed player; see seed data
+  // comments for why.
+  clutchModifier Decimal  @map("clutch_modifier") @db.Decimal(4, 3)
+  usageRate      Decimal  @map("usage_rate") @db.Decimal(5, 4)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("player_ratings")
 }
