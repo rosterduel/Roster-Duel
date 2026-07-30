@@ -75,7 +75,9 @@ export interface PossessionEvent {
   blockPlayerId?: string;
   scoreA: number;
   scoreB: number;
-  /** Signed swing in team A's win probability caused by this event. */
+  /** Score margin (offense minus defense) after this event. */
+  offenseMarginAfter: number;
+  /** Signed swing in the offense team's win probability caused by this event. */
   leverageScore: number;
 }
 

@@ -58,7 +58,11 @@ export function simulateGame(options: SimulateGameOptions): GameResult {
     let trips = 0;
 
     while (continuePossession && trips < MAX_TRIPS_PER_POSSESSION) {
-      const marginBeforeA = scoreA - scoreB;
+      // Leverage and highlight text are framed relative to whichever team is
+      // on offense this trip, not a fixed team A — "Down 2, {player} buries
+      // the go-ahead three" only reads correctly if "Down 2" describes the
+      // shooter's own team, matching how a real highlight reel narrates it.
+      const marginBeforeOffense = offense === 'A' ? scoreA - scoreB : scoreB - scoreA;
       const secondsRemainingBefore = TOTAL_GAME_SECONDS - elapsedSeconds;
 
       const trip = simulateTrip(offenseTeam, defenseTeam, offenseRatings, defenseRatings, rand);
@@ -70,9 +74,9 @@ export function simulateGame(options: SimulateGameOptions): GameResult {
       elapsedSeconds = Math.min(TOTAL_GAME_SECONDS, elapsedSeconds + secondsPerTrip);
 
       const secondsRemainingAfter = TOTAL_GAME_SECONDS - elapsedSeconds;
-      const marginAfterA = scoreA - scoreB;
-      const winProbBefore = estimateWinProbability(marginBeforeA, secondsRemainingBefore);
-      const winProbAfter = estimateWinProbability(marginAfterA, secondsRemainingAfter);
+      const marginAfterOffense = offense === 'A' ? scoreA - scoreB : scoreB - scoreA;
+      const winProbBefore = estimateWinProbability(marginBeforeOffense, secondsRemainingBefore);
+      const winProbAfter = estimateWinProbability(marginAfterOffense, secondsRemainingAfter);
 
       events.push({
         possessionIndex,
@@ -89,6 +93,7 @@ export function simulateGame(options: SimulateGameOptions): GameResult {
         blockPlayerId: trip.blockPlayerId,
         scoreA,
         scoreB,
+        offenseMarginAfter: marginAfterOffense,
         leverageScore: winProbAfter - winProbBefore,
       });
 

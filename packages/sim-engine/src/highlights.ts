@@ -17,7 +17,9 @@ function formatClock(seconds: number): string {
 function buildScoreContext(event: PossessionEvent): { clockLabel: string; scoreContext: string } {
   const clockInQuarter = event.gameClockSeconds - (4 - event.quarter) * QUARTER_SECONDS;
   const clockLabel = formatClock(clockInQuarter);
-  const margin = event.scoreA - event.scoreB;
+  // Framed relative to the offense team for this trip, not a fixed team A —
+  // see the comment in simulateGame.ts for why.
+  const margin = event.offenseMarginAfter;
   const marginLabel = margin === 0 ? 'Tied' : margin > 0 ? `Up ${margin}` : `Down ${Math.abs(margin)}`;
   return { clockLabel, scoreContext: `${marginLabel} with ${clockLabel} left in the ${ordinal(event.quarter)},` };
 }
