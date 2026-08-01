@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { ApiError, api } from '../lib/api';
@@ -40,6 +41,14 @@ export default function HomePage() {
       <div className="text-center">
         <h1 className="text-4xl font-bold tracking-tight">RosterDuel</h1>
         <p className="mt-1 text-gray-500">Draft blind. Simulate the matchup. See who built the better roster.</p>
+        <div className="mt-3 flex justify-center gap-4 text-sm">
+          <Link href="/profile" className="text-orange-600 underline">
+            Profile
+          </Link>
+          <Link href="/leaderboard" className="text-orange-600 underline">
+            Leaderboard
+          </Link>
+        </div>
       </div>
 
       <section className="rounded-xl border border-gray-200 bg-white p-5">

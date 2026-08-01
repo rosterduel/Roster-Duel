@@ -3,6 +3,26 @@
 
 export type NbaPosition = 'PG' | 'SG' | 'SF' | 'PF' | 'C' | '6MAN';
 
+export interface PublicUser {
+  id: string;
+  displayName: string;
+}
+
+export interface UserRecord {
+  gamesPlayed: number;
+  overallWins: number;
+  overallLosses: number;
+  last10Wins: number;
+  last10Losses: number;
+}
+
+export interface LeaderboardEntry {
+  userId: string;
+  displayName: string;
+  wins: number;
+  losses: number;
+}
+
 export interface PlayerSummary {
   id: string;
   name: string;

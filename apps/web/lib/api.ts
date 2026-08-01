@@ -1,5 +1,5 @@
 import { getSessionToken } from './session';
-import { CreateMatchResponse, GameResult, MatchState, PlayerSummary } from './types';
+import { CreateMatchResponse, GameResult, LeaderboardEntry, MatchState, PlayerSummary, PublicUser, UserRecord } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
@@ -46,4 +46,13 @@ export const api = {
   lockRoster: (rosterId: string) => request<MatchState>(`/matches/roster/${rosterId}/lock`, { method: 'POST' }),
 
   regenerateRecap: (roomCode: string) => request<GameResult>(`/matches/${roomCode}/recap`, { method: 'POST' }),
+
+  getMe: () => request<PublicUser>('/users/me'),
+
+  changeDisplayName: (displayName: string) =>
+    request<PublicUser>('/users/me/display-name', { method: 'PATCH', body: JSON.stringify({ displayName }) }),
+
+  getMyRecord: () => request<UserRecord>('/stats/me'),
+
+  getLeaderboard: (limit = 20) => request<LeaderboardEntry[]>(`/leaderboard?limit=${limit}`),
 };

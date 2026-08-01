@@ -15,9 +15,12 @@ apps/
     components/          DraftBoard, PlayerCard, GameCastPlayback,
                           BoxScoreTable, HighlightsList, NewspaperRecap
     app/
-      page.tsx             Home — create or join a friend match
+      page.tsx             Home — create/join a friend match, nav to
+                            profile/leaderboard
       match/[roomCode]/    Draft room + results screen (one page, state
                             machine driven by match status)
+      profile/              View/change display name, view your own record
+      leaderboard/           Top-N by wins (random-matchmaking only)
   api/                 NestJS + TypeScript backend, Prisma ORM (Postgres)
     prisma/
       schema.prisma      Full data model — players/player_stats/
@@ -39,6 +42,9 @@ apps/
       players/             GET /players — draft-screen player pool
       matches/              Match/roster lifecycle, draft timer + auto-fill,
                              WebSocket gateway for live draft-room updates
+      users/                Moderated, unique display names (spec 9a)
+      stats/                Record/last-10/leaderboard, random-matchmaking
+                             only (spec 9a)
 packages/
   sim-engine/          Pure TypeScript simulation engine — standalone,
                        unit-tested, no dependency on web/api
@@ -49,9 +55,12 @@ docker-compose.yml     Local Postgres + Redis
 Current status: **the full Phase 1 loop works end-to-end** — sim engine
 (with real overtime periods, GameCast animation data, and a Game MVP
 formula), the full data model (players/ratings + users/rosters/matches/
-game_results), a post-game recap generation service, and the draft UI /
-friend-link matchmaking / results screen are all built and tested. See
-"Draft flow & matchmaking" below for what's in Phase 1 scope vs. deferred.
+game_results), a post-game recap generation service with a proper
+newspaper-masthead UI, the draft UI / friend-link matchmaking / results
+screen, and moderated display names + leaderboard/stats plumbing (spec
+9a) are all built and tested. See "Draft flow & matchmaking" and
+"Accounts, moderation & leaderboards" below for what's in Phase 1 scope
+vs. deferred.
 
 ### Highlight animation data (spec section 4a)
 
@@ -347,9 +356,55 @@ Full reasoning is in the schema file's header comment; summary:
   recap generates automatically (fire-and-forget — a slow/failed recap
   never blocks the game result itself from being ready). If no key is
   configured, the game result is still fully usable; the newspaper UI
-  shows a manual "Generate recap" button that hits
-  `POST /matches/:roomCode/recap` instead, so recap generation can be
-  tested live at any point after a key is added without re-simulating.
+  (`apps/web/components/NewspaperRecap.tsx`) shows a masthead-styled
+  "Generate recap" prompt that hits `POST /matches/:roomCode/recap`
+  instead — clicking it plays the same unfold animation used once a recap
+  exists, but as a loading state while the request is in flight (a
+  `max-height`-driven collapse/expand on a region below an always-visible
+  masthead, so body text is revealed rather than squashed by scaling).
+
+## Accounts, moderation & leaderboards (spec section 9a)
+
+- **Still no real auth.** The anonymous session token (`X-Session-Token`,
+  client-generated, stored in `localStorage`) already persists across
+  matches on the same device/browser — that already satisfies "persistent
+  identity beyond a single match." What's new here is a user-*chosen*
+  display name (previously only ever auto-generated) and the stats to
+  actually show on it. Clearing browser storage or switching devices still
+  loses continuity — an inherent limitation of skipping real auth, not
+  something fixed in this round.
+- **`users.display_name` is now `@unique`.** The auto-generated default
+  (`"Player 4821"`) is uniqueness-safe via retry-on-collision
+  (`session.guard.ts`), the same pattern `roomCode` generation already
+  used. A user can change it via `PATCH /users/me/display-name`
+  (`apps/api/src/users/`), which runs `validateDisplayName.ts` — a pure,
+  independently-testable function checking length/charset, then real
+  profanity moderation via **`leo-profanity`** (an established,
+  actively-maintained, multi-language wordlist library — not a hand-rolled
+  filter, per the spec's explicit requirement since minors may use the
+  app) — before hitting the DB, where the unique constraint is the final
+  backstop against a race.
+- **Leaderboard eligibility is real, the queue that feeds it isn't yet.**
+  `matches.match_type` (`friend_link` | `random_matchmaking`) drives
+  `apps/api/src/stats/` — both `GET /stats/me` (your own record + last-10)
+  and `GET /leaderboard` filter strictly on `matchType: 'random_matchmaking'`
+  and `status: 'complete'`, per the spec's reasoning: a friend link is
+  trivially self-matchable, so only matches where you don't control the
+  opponent count toward a public record. Every match created so far is
+  `friend_link` (set explicitly in `matches.service.ts`), so these
+  endpoints correctly return empty/zero data right now — **the
+  random-matchmaking queue itself is a deliberately deferred scope line**,
+  agreed on explicitly rather than assumed: the leaderboard/moderation
+  plumbing needed to exist regardless of when the queue lands, but the
+  queue (presence-free pairing, same async draft model as friend matches)
+  is its own follow-up. The frontend (`apps/web/app/profile`,
+  `apps/web/app/leaderboard`) shows an explicit "no ranked games yet"
+  state rather than an error for this reason.
+- **Stats are computed on read**, not maintained as persisted running
+  counters (`apps/api/src/stats/recordStats.ts` — pure functions,
+  independently tested, fed by a Prisma query in `stats.service.ts`).
+  Simpler and can't drift out of sync; revisit only if this becomes a
+  measurable perf issue at real scale.
 
 ## Player data sourcing
 

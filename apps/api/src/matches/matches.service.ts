@@ -37,7 +37,11 @@ export class MatchesService {
 
     const roomCode = await this.generateUniqueRoomCode();
     const match = await this.prisma.match.create({
-      data: { roomCode, sport: 'nba', draftTimerSeconds, rosterAId: roster.id, status: 'drafting' },
+      // Explicit even though it's the schema default: every match created
+      // through this friend-link flow is friend_link, never eligible for
+      // leaderboard stats (spec 9a) — the random-matchmaking queue that
+      // would set the other value doesn't exist yet (agreed deferred scope).
+      data: { roomCode, sport: 'nba', matchType: 'friend_link', draftTimerSeconds, rosterAId: roster.id, status: 'drafting' },
     });
 
     return {

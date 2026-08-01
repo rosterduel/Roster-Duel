@@ -35,6 +35,17 @@ enum Sport {
   nfl
 }
 
+// Drives leaderboard eligibility (spec section 9a) — only random_matchmaking
+// games count toward stats, since a friend link is trivially self-matchable
+// (send it to yourself/an alt account and farm wins). Every match created so
+// far is friend_link; the random-matchmaking queue itself is deliberately
+// not built yet (agreed scope line — see README), but the column and the
+// eligibility check are in place now so nothing needs to change when it is.
+enum MatchType {
+  friend_link
+  random_matchmaking
+}
+
 // One row per player per sport, career-aggregated identity fields.
 model Player {
   id              String  @id @default(uuid())
@@ -102,12 +113,15 @@ model PlayerRating {
 }
 
 // Anonymous, session-token-identified "account" — see the file header for
-// why this isn't real auth. displayName is generated server-side at
-// creation (e.g. "Player 4821"), not user-editable in Phase 1.
+// why this isn't real auth. displayName is auto-generated (e.g. "Player
+// 4821") at creation and unique-by-construction (retry-on-collision, see
+// session.guard.ts); spec section 9a adds the ability for a user to choose
+// their own name instead, subject to moderation and this same uniqueness
+// constraint (see users/ module).
 model User {
   id           String   @id @default(uuid())
   sessionToken String   @unique @map("session_token")
-  displayName  String   @map("display_name")
+  displayName  String   @unique @map("display_name")
   createdAt    DateTime @default(now()) @map("created_at")
 
   rosters Roster[]
@@ -145,19 +159,20 @@ model Roster {
 // whether side B has joined yet is inferred from `rosterBId` being null,
 // not a separate status value.
 model Match {
-  id                String   @id @default(uuid())
-  sport             Sport    @default(nba)
-  roomCode          String   @unique @map("room_code")
-  rosterAId         String?  @unique @map("roster_a_id")
-  rosterA           Roster?  @relation("MatchRosterA", fields: [rosterAId], references: [id])
-  rosterBId         String?  @unique @map("roster_b_id")
-  rosterB           Roster?  @relation("MatchRosterB", fields: [rosterBId], references: [id])
+  id                String    @id @default(uuid())
+  sport             Sport     @default(nba)
+  roomCode          String    @unique @map("room_code")
+  matchType         MatchType @default(friend_link) @map("match_type")
+  rosterAId         String?   @unique @map("roster_a_id")
+  rosterA           Roster?   @relation("MatchRosterA", fields: [rosterAId], references: [id])
+  rosterBId         String?   @unique @map("roster_b_id")
+  rosterB           Roster?   @relation("MatchRosterB", fields: [rosterBId], references: [id])
   // Kept per spec's schema; Phase 1 always uses 1 (best-of-N is out of scope
   // for now — spec section 5.6).
-  gamesToPlay       Int      @default(1) @map("games_to_play")
-  draftTimerSeconds Int      @default(300) @map("draft_timer_seconds")
-  status            String   @default("drafting") // 'drafting' | 'simulating' | 'complete'
-  createdAt         DateTime @default(now()) @map("created_at")
+  gamesToPlay       Int       @default(1) @map("games_to_play")
+  draftTimerSeconds Int       @default(300) @map("draft_timer_seconds")
+  status            String    @default("drafting") // 'drafting' | 'simulating' | 'complete'
+  createdAt         DateTime  @default(now()) @map("created_at")
 
   gameResults GameResult[]
 
