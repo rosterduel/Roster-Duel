@@ -2,6 +2,7 @@ import { createEmptyBoxScore, applyTripToBoxScore } from './boxScore';
 import { LEAGUE_AVG_PACE, LEAGUE_AVG_PPP, MAX_TRIPS_PER_POSSESSION, OVERTIME_PERIOD_SECONDS, TOTAL_GAME_SECONDS } from './constants';
 import { ClockContext, computeOvertimeClock, computeRegulationClock } from './gameClock';
 import { buildHighlights } from './highlights';
+import { computeMvp } from './mvp';
 import { simulateTrip } from './possession';
 import { createSeededRandom, RandomFn } from './rng';
 import { computeTeamRatings } from './teamRatings';
@@ -160,6 +161,7 @@ export function simulateGame(options: SimulateGameOptions): GameResult {
 
   const highlights = buildHighlights(events, nameById, options.highlightCount ?? 5);
   const winner: Side = scoreA > scoreB ? 'A' : 'B'; // the overtime loop above guarantees no tie here
+  const mvp = computeMvp({ teamId: teamA.teamId, box: boxA }, { teamId: teamB.teamId, box: boxB }, highlights);
 
   return {
     teamA: { teamId: teamA.teamId, teamName: teamA.teamName, score: scoreA },
@@ -169,5 +171,6 @@ export function simulateGame(options: SimulateGameOptions): GameResult {
     possessionLog: events,
     highlights,
     overtimePeriods,
+    mvp,
   };
 }

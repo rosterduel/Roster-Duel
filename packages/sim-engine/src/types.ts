@@ -129,6 +129,8 @@ export interface PossessionEvent {
 
 export interface Highlight {
   possessionIndex: number;
+  /** Which team was on offense for this play — needed to attribute leverage credit to the right side (see mvp.ts). */
+  offenseTeamId: string;
   playerId: string;
   playerName: string;
   description: string;
@@ -149,6 +151,22 @@ export interface TeamGameResult {
   score: number;
 }
 
+/**
+ * Spec section 4b's "Game MVP" callout. `mvpScore` blends two normalized
+ * (0-1) components — see mvp.ts for the formula and the reasoning behind
+ * its weights. The raw components are included so the UI/recap prompt can
+ * explain *why* this player was picked (stat-line vs. clutch-moment MVP),
+ * not just assert it.
+ */
+export interface GameMvp {
+  playerId: string;
+  playerName: string;
+  teamId: string;
+  mvpScore: number;
+  boxScoreComponent: number;
+  leverageComponent: number;
+}
+
 export interface GameResult {
   teamA: TeamGameResult;
   teamB: TeamGameResult;
@@ -161,4 +179,5 @@ export interface GameResult {
   highlights: Highlight[];
   /** 0 if the game was decided in regulation, otherwise how many OT periods were played. */
   overtimePeriods: number;
+  mvp: GameMvp;
 }

@@ -87,6 +87,7 @@ export function buildHighlights(events: PossessionEvent[], nameById: Map<string,
     const { description, playerId, playerName } = describe(event, nameById);
     return {
       possessionIndex: event.possessionIndex,
+      offenseTeamId: event.offenseTeamId,
       playerId,
       playerName,
       description,

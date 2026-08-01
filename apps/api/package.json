@@ -12,12 +12,14 @@
     "prisma:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
     "verify:sim": "ts-node scripts/verifySimEndToEnd.ts",
+    "try:recap": "ts-node scripts/tryRecap.ts",
     "test": "jest"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@nestjs/common": "^11.1.28",
     "@nestjs/core": "^11.1.28",
     "@nestjs/platform-express": "^11.1.28",
@@ -26,7 +28,8 @@
     "@prisma/client": "^6.19.3",
     "@roster-duel/sim-engine": "*",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.24",

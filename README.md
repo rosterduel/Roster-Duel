@@ -29,10 +29,11 @@ packages/
 docker-compose.yml     Local Postgres + Redis
 ```
 
-Current status: scaffold, sim engine (with real overtime periods and
-GameCast animation data — see below), and the players/player_stats/
-player_ratings data model + seed script are built and tested. Draft UI,
-matchmaking, and the users/rosters/matches/game_results tables land next.
+Current status: scaffold, sim engine (with real overtime periods, GameCast
+animation data, and a Game MVP formula — see below), the players/
+player_stats/player_ratings data model + seed script, and a post-game
+recap generation service are built and tested. Draft UI, matchmaking, and
+the users/rosters/matches/game_results tables land next.
 
 ### Highlight animation data (spec section 4a)
 
@@ -62,6 +63,83 @@ NBA-only for now, matching Phase 1 scope — NFL's equivalent (yard line +
 direction) isn't built since NFL itself is Phase 2. Run
 `npm run demo:sim -- <seed>` and look at the `[playType] start -> end` line
 under each highlight to see this data directly.
+
+### Game MVP formula (spec section 4b)
+
+`GameResult.mvp` (computed in `packages/sim-engine/src/mvp.ts`) is an
+explicit, documented formula rather than "top scorer" — the spec calls out
+that raw points alone would let a garbage-time stat-padder beat someone who
+hit the actual game-deciding shots. It blends two components, each
+min-max normalized (0-1) across every player in the box score before being
+combined:
+
+- **Box-score composite** — an original weighting (not a reproduction of
+  Game Score/PER/BPM/any named metric; see "Player data sourcing" below for
+  why that distinction matters here): points, plus rebounds/assists
+  weighted above 1x to value playmaking beyond scoring, plus steals/blocks
+  weighted higher still since they're rarer defensive events, minus
+  turnovers and missed shots at a moderate penalty.
+- **Leverage component** — credit for authoring the game's biggest
+  win-probability swings (from the same top-5 highlights section 5.5
+  already generates). Because leverage is stored signed relative to the
+  offense team, credit is re-signed relative to *the credited player's own
+  team* before counting it — a defender who causes a highlight-worthy
+  steal or block gets positive credit, and a costly turnover doesn't
+  double-penalize its own committer (it's already reflected in the
+  box-score composite).
+
+The two normalized components are blended 60% box score / 40% leverage
+(`MVP_BOX_SCORE_WEIGHT` / `MVP_LEVERAGE_WEIGHT` in `constants.ts`) — box
+score is the primary signal (a full game's stat line), leverage is a
+meaningful but secondary boost for clutch moments. Exact weighting is
+called out in the spec as an implementation decision; see the doc comment
+on `computeMvp()` for the full reasoning. Run `npm run demo:sim -- <seed>`
+and look at the `GAME MVP` line to see it end-to-end.
+
+## Post-game recap ("newspaper" feature, spec section 4b)
+
+`apps/api/src/recap/` generates the headline + written recap article shown
+under the folded newspaper UI element (not yet built — this is the backend
+piece). Two design decisions here were made by the user, not chosen by me:
+
+- **LLM-generated, not templated** — recap writing is a well-scoped
+  structured-writing task, so a cost-efficient model is used rather than a
+  top-tier one (`claude-haiku-4-5`, see `RECAP_MODEL` in
+  `anthropicRecapGenerator.ts`).
+- **Grounded strictly in simulated data** — `buildRecapPrompt.ts` builds
+  the prompt from only the final score, full box score, and the same
+  top-5 highlight data section 5.5 already produces, plus the
+  already-computed `GameMvp` (the model narrates *why* that player was the
+  MVP, it doesn't pick who). The system prompt explicitly forbids
+  inventing players, plays, or stats not present in that data.
+
+**Architecture**: `RecapGenerator` (`types.ts`) is a one-method interface
+(`generate(input) -> {headline, article}`), so nothing in the app depends
+directly on the Anthropic SDK except `anthropicRecapGenerator.ts` itself.
+`generateGameRecap.ts` adapts a full sim-engine `GameResult` into a prompt
+request — that's the one call site the rest of the app should use.
+Structured output uses the SDK's `client.messages.parse()` with a Zod
+schema (`recapSchema.ts`), not free-form text parsing.
+
+**Testing**: `buildRecapPrompt.spec.ts` and `generateGameRecap.spec.ts` run
+with no network access at all, via `createFakeRecapGenerator()`
+(`testUtils.ts`) — a stand-in `RecapGenerator` that returns a fixed
+response. **A live Anthropic API key is only needed to actually call the
+real API** — none of the automated test suite requires one.
+
+**⚠️ Needs a real API key to run for real.** Nothing in this repo has an
+`ANTHROPIC_API_KEY` configured — set one in `apps/api/.env` (see
+`.env.example`) to actually generate a recap. To try it end-to-end with a
+sample simulated game (no database required):
+
+```bash
+ANTHROPIC_API_KEY=sk-... npm run try:recap -w apps/api
+```
+
+Get a key at https://console.anthropic.com/settings/keys. Cost is small
+and usage-based (a fraction of a cent per ~600-word recap on Haiku), not a
+fixed monthly expense — see spec section 4b for the cost reasoning this
+was already weighed against.
 
 ## Prerequisites
 

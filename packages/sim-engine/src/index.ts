@@ -12,6 +12,7 @@ export { estimateWinProbability } from './winProbability';
 export { computeRegulationClock, computeOvertimeClock } from './gameClock';
 export type { ClockContext } from './gameClock';
 export { buildHighlights } from './highlights';
+export { computeMvp } from './mvp';
 export { simulateGame } from './simulateGame';
 export type { SimulateGameOptions } from './simulateGame';
 export { createSeededRandom, weightedRandom, weightedRandomBy } from './rng';

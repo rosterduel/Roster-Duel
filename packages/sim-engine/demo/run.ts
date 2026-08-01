@@ -57,6 +57,11 @@ result.highlights.forEach((h, i) => {
   console.log(`   [${h.playType}] ${h.startLocation} -> ${h.endLocation}`);
 });
 
+console.log(
+  `\nGAME MVP: ${result.mvp.playerName} (score ${result.mvp.mvpScore.toFixed(2)} — ` +
+    `box ${result.mvp.boxScoreComponent.toFixed(2)}, leverage ${result.mvp.leverageComponent.toFixed(2)})`,
+);
+
 if (result.overtimePeriods > 0) {
   console.log(`\nWent to ${result.overtimePeriods} overtime period(s) — regulation ended tied.`);
   for (let period = 1; period <= result.overtimePeriods; period++) {
