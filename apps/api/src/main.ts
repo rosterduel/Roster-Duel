@@ -1,3 +1,7 @@
+// Must run before any other import touches process.env (e.g. ANTHROPIC_API_KEY
+// in matches.service.ts) — Prisma loads its own .env internally for
+// DATABASE_URL, but nothing else in this app does that automatically.
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 

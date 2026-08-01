@@ -4,11 +4,13 @@
  * a sample game with the sim-engine (no DB needed) and sends it to the
  * real Anthropic API to generate a headline + article.
  *
- * Requires ANTHROPIC_API_KEY to be set (see apps/api/.env.example). Not a
- * Jest test — the recap unit tests use a fake generator and never touch
- * the network. Run with:
- *   ANTHROPIC_API_KEY=sk-... npm run try:recap -w apps/api
+ * Requires ANTHROPIC_API_KEY to be set — either in apps/api/.env (see
+ * .env.example) or inline. Not a Jest test — the recap unit tests use a
+ * fake generator and never touch the network. Run with:
+ *   npm run try:recap -w apps/api
+ *   ANTHROPIC_API_KEY=sk-... npm run try:recap -w apps/api   (override)
  */
+import 'dotenv/config';
 import { simulateGame, TeamInput } from '@roster-duel/sim-engine';
 import { NBA_SEED_PLAYERS } from '../prisma/seedData/nbaPlayers';
 import { createAnthropicRecapGenerator } from '../src/recap/anthropicRecapGenerator';

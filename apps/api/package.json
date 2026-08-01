@@ -27,6 +27,7 @@
     "@nestjs/websockets": "^11.1.28",
     "@prisma/client": "^6.19.3",
     "@roster-duel/sim-engine": "*",
+    "dotenv": "^16.6.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "zod": "^4.4.3"
