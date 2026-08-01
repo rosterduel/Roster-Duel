@@ -53,62 +53,70 @@ describe('computeRecord', () => {
 });
 
 describe('buildLeaderboard', () => {
-  it('tallies wins and losses per user across matches', () => {
-    const results = [
-      { userId: 'a', won: true },
-      { userId: 'b', won: false },
-      { userId: 'a', won: true },
-      { userId: 'c', won: false },
-    ];
-    const names = new Map([
-      ['a', 'Alpha'],
-      ['b', 'Beta'],
-      ['c', 'Gamma'],
-    ]);
+  // Helper: N results for a user with the given number of wins/losses.
+  function record(userId: string, wins: number, losses: number): { userId: string; won: boolean }[] {
+    return [...Array(wins).fill({ userId, won: true }), ...Array(losses).fill({ userId, won: false })];
+  }
 
-    const board = buildLeaderboard(results, names, 10);
+  it('tallies wins, losses, gamesPlayed, and winPct per user', () => {
+    const results = record('a', 16, 4);
+    const names = new Map([['a', 'Alpha']]);
 
-    expect(board).toEqual([
-      { userId: 'a', displayName: 'Alpha', wins: 2, losses: 0 },
-      { userId: 'b', displayName: 'Beta', wins: 0, losses: 1 },
-      { userId: 'c', displayName: 'Gamma', wins: 0, losses: 1 },
-    ]);
+    const board = buildLeaderboard(results, names, { limit: 10, minGames: 20 });
+
+    expect(board).toEqual([{ userId: 'a', displayName: 'Alpha', wins: 16, losses: 4, gamesPlayed: 20, winPct: 0.8 }]);
   });
 
-  it('sorts by wins descending, then losses ascending as a tiebreaker', () => {
-    const results = [
-      { userId: 'a', won: true },
-      { userId: 'a', won: false },
-      { userId: 'a', won: false },
-      { userId: 'b', won: true },
-      { userId: 'b', won: false },
-    ];
+  it('excludes players below the minimum games threshold from the ranking entirely', () => {
+    const results = [...record('a', 15, 4), ...record('b', 12, 8)]; // a: 19 games, b: 20 games
     const names = new Map([
       ['a', 'Alpha'],
       ['b', 'Beta'],
     ]);
 
-    const board = buildLeaderboard(results, names, 10);
+    const board = buildLeaderboard(results, names, { limit: 10, minGames: 20 });
+
+    expect(board.map((e) => e.userId)).toEqual(['b']);
+  });
+
+  it('ranks by win percentage, not raw win count', () => {
+    // a: 15-5 (75%, 20 games) vs b: 16-14 (53.3%, 30 games) — b has more
+    // raw wins but a should rank higher on win%.
+    const results = [...record('a', 15, 5), ...record('b', 16, 14)];
+    const names = new Map([
+      ['a', 'Alpha'],
+      ['b', 'Beta'],
+    ]);
+
+    const board = buildLeaderboard(results, names, { limit: 10, minGames: 20 });
+    expect(board.map((e) => e.userId)).toEqual(['a', 'b']);
+  });
+
+  it('breaks a tied win percentage by total wins', () => {
+    // Both at exactly 60% — a over 20 games, b over 30 games — b has more wins.
+    const results = [...record('a', 12, 8), ...record('b', 18, 12)];
+    const names = new Map([
+      ['a', 'Alpha'],
+      ['b', 'Beta'],
+    ]);
+
+    const board = buildLeaderboard(results, names, { limit: 10, minGames: 20 });
     expect(board.map((e) => e.userId)).toEqual(['b', 'a']);
   });
 
   it('respects the limit', () => {
-    const results = [
-      { userId: 'a', won: true },
-      { userId: 'b', won: true },
-      { userId: 'c', won: true },
-    ];
+    const results = [...record('a', 20, 0), ...record('b', 20, 0), ...record('c', 20, 0)];
     const names = new Map([
       ['a', 'Alpha'],
       ['b', 'Beta'],
       ['c', 'Gamma'],
     ]);
 
-    expect(buildLeaderboard(results, names, 2)).toHaveLength(2);
+    expect(buildLeaderboard(results, names, { limit: 2, minGames: 20 })).toHaveLength(2);
   });
 
   it('falls back to "Unknown" if a display name is missing', () => {
-    const board = buildLeaderboard([{ userId: 'x', won: true }], new Map(), 10);
+    const board = buildLeaderboard(record('x', 20, 0), new Map(), { limit: 10, minGames: 20 });
     expect(board[0].displayName).toBe('Unknown');
   });
 });

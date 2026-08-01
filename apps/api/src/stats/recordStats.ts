@@ -39,17 +39,38 @@ export interface LeaderboardEntry {
   displayName: string;
   wins: number;
   losses: number;
+  gamesPlayed: number;
+  winPct: number;
+}
+
+export interface LeaderboardOptions {
+  limit: number;
+  /** Spec 9a: games below this count are excluded from ranking entirely (still visible on the player's own profile). */
+  minGames: number;
 }
 
 /**
- * Tally wins/losses per user from a flat list of decided games, sorted by
- * most wins (ties broken by fewer losses). Pure — the caller resolves
- * which side each user was on and whether they won.
+ * Spec section 9a's ranking methodology: sort by win percentage (not raw
+ * wins) among the results given, minimum games played to qualify, total
+ * wins as the tiebreaker for equal win%. The rolling-recent-window
+ * requirement ("last 60 days") is enforced by the *caller* filtering which
+ * matches it fetches before building `results` — see
+ * stats.service.ts#getLeaderboard — not by this function, which only sees
+ * whatever games it's handed. That split keeps this function pure and
+ * trivially testable, and keeps the "recent window" behavior a plain date
+ * filter on the query rather than a decay algorithm, per spec.
+ *
+ * Nothing here hard-codes win% as the only possible ranking signal at the
+ * data layer — wins/losses/games are derived from raw match outcomes at
+ * read time, not persisted as a ranking score. A future Elo-style system
+ * would be a new computation path (and, unlike this one, would need
+ * persisted game-order-dependent state), not a rework of this schema —
+ * exactly the extensibility the spec asks for without building Elo now.
  */
 export function buildLeaderboard(
   results: { userId: string; won: boolean }[],
   displayNameById: Map<string, string>,
-  limit: number,
+  options: LeaderboardOptions,
 ): LeaderboardEntry[] {
   const tally = new Map<string, { wins: number; losses: number }>();
   for (const { userId, won } of results) {
@@ -60,7 +81,18 @@ export function buildLeaderboard(
   }
 
   return [...tally.entries()]
-    .map(([userId, rec]) => ({ userId, displayName: displayNameById.get(userId) ?? 'Unknown', ...rec }))
-    .sort((a, b) => b.wins - a.wins || a.losses - b.losses)
-    .slice(0, limit);
+    .map(([userId, rec]) => {
+      const gamesPlayed = rec.wins + rec.losses;
+      return {
+        userId,
+        displayName: displayNameById.get(userId) ?? 'Unknown',
+        wins: rec.wins,
+        losses: rec.losses,
+        gamesPlayed,
+        winPct: gamesPlayed > 0 ? rec.wins / gamesPlayed : 0,
+      };
+    })
+    .filter((e) => e.gamesPlayed >= options.minGames)
+    .sort((a, b) => b.winPct - a.winPct || b.wins - a.wins)
+    .slice(0, options.limit);
 }

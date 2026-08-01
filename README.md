@@ -400,11 +400,33 @@ Full reasoning is in the schema file's header comment; summary:
   is its own follow-up. The frontend (`apps/web/app/profile`,
   `apps/web/app/leaderboard`) shows an explicit "no ranked games yet"
   state rather than an error for this reason.
+- **Ranking methodology (spec 9a, refined after initial feedback): win %,
+  not raw wins**, minimum 20 games to qualify (below that, a player's
+  stats are still visible on their own profile via `GET /stats/me`, just
+  not on the public board), ties broken by total wins
+  (`buildLeaderboard()` in `recordStats.ts`).
+- **Rolling 60-day window, not lifetime stats** — `getLeaderboard()` only
+  fetches matches with `createdAt >= now - 60 days` before handing them to
+  `buildLeaderboard()`; the 20-game minimum applies *within* that window.
+  A player who wins a streak and stops playing ages off the board
+  naturally as their games fall out of the window, rather than
+  squatting at the top indefinitely. Deliberately just a date filter on
+  the same compute-on-read query — no decay formula, no scheduled job.
+  Both the window (`LEADERBOARD_WINDOW_DAYS`) and the minimum
+  (`LEADERBOARD_MIN_GAMES`) are named constants in `stats.service.ts`,
+  not hard requirements.
 - **Stats are computed on read**, not maintained as persisted running
   counters (`apps/api/src/stats/recordStats.ts` — pure functions,
   independently tested, fed by a Prisma query in `stats.service.ts`).
   Simpler and can't drift out of sync; revisit only if this becomes a
-  measurable perf issue at real scale.
+  measurable perf issue at real scale. Nothing here hard-codes win% as
+  the only possible ranking signal at the data-model level either — wins/
+  losses/games are derived from raw match outcomes each time, not
+  persisted as a score — so a future Elo-style system (an explicit v2
+  candidate, not built now: it needs persisted game-order-dependent
+  state, real tuning decisions, and is less immediately intuitive than
+  win% for a casual audience) would be a new computation path, not a
+  rework of this schema.
 
 ## Player data sourcing
 

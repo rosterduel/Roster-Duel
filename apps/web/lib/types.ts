@@ -21,6 +21,8 @@ export interface LeaderboardEntry {
   displayName: string;
   wins: number;
   losses: number;
+  gamesPlayed: number;
+  winPct: number;
 }
 
 export interface PlayerSummary {
