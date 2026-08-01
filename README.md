@@ -29,10 +29,39 @@ packages/
 docker-compose.yml     Local Postgres + Redis
 ```
 
-Current status: scaffold, sim engine (with real overtime periods), and the
-players/player_stats/player_ratings data model + seed script are built and
-tested. Draft UI, matchmaking, and the users/rosters/matches/game_results
-tables land next.
+Current status: scaffold, sim engine (with real overtime periods and
+GameCast animation data — see below), and the players/player_stats/
+player_ratings data model + seed script are built and tested. Draft UI,
+matchmaking, and the users/rosters/matches/game_results tables land next.
+
+### Highlight animation data (spec section 4a)
+
+The results screen's animated GameCast-style playback needs more than
+written highlight text — it needs to know *what kind* of play happened and
+roughly *where*, so the frontend can pick a simple schematic animation.
+`PossessionEvent` and `Highlight` (in `packages/sim-engine/src/types.ts`)
+carry three fields for this, computed at simulation time in `possession.ts`
+(not inferred after the fact from existing data):
+
+- **`playType`** — a frontend-friendly category (`three_pointer_made`,
+  `steal`, `block`, `offensive_rebound`, etc.), derived from data the sim
+  already tracks. No standalone `defensive_rebound` type: an unblocked miss
+  is already fully described by its shot type, since who rebounds it
+  doesn't change what animation plays. `offensive_rebound` does get its own
+  type because the possession continuing is a genuinely different
+  game-flow event, not just a missed-shot flavor.
+- **`startLocation` / `endLocation`** — a small `CourtZone` enum (`paint`,
+  `mid_range`, `three_left/right/top`, `free_throw_line`, `backcourt`), not
+  real coordinates. Shot zones are randomized at simulation time (uniform
+  across the three 3PT zones; paint favored ~60/40 over mid-range for 2PT
+  attempts, a rough nod to real NBA shot profiles, not a rigorous model).
+  Every shot's ball ends up at `paint` (the hoop) whether it's made or
+  missed; only the start zone varies.
+
+NBA-only for now, matching Phase 1 scope — NFL's equivalent (yard line +
+direction) isn't built since NFL itself is Phase 2. Run
+`npm run demo:sim -- <seed>` and look at the `[playType] start -> end` line
+under each highlight to see this data directly.
 
 ## Prerequisites
 

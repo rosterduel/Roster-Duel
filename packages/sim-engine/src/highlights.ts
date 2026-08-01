@@ -96,6 +96,9 @@ export function buildHighlights(events: PossessionEvent[], nameById: Map<string,
       outcome: event.outcome,
       scoreAAfter: event.scoreA,
       scoreBAfter: event.scoreB,
+      playType: event.playType,
+      startLocation: event.startLocation,
+      endLocation: event.endLocation,
     };
   });
 }

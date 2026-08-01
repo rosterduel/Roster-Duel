@@ -54,6 +54,7 @@ printBoxScore(result.teamB.teamName, result.boxScore.teamB);
 console.log('\nTOP 5 HIGHLIGHTS');
 result.highlights.forEach((h, i) => {
   console.log(`${i + 1}. ${h.description} (leverage ${(h.leverageScore * 100).toFixed(1)}%)`);
+  console.log(`   [${h.playType}] ${h.startLocation} -> ${h.endLocation}`);
 });
 
 if (result.overtimePeriods > 0) {

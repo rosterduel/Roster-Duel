@@ -3,7 +3,7 @@ import { log5 } from './log5';
 import { calibrateOutcomeProbabilities } from './outcomeProbabilities';
 import { RandomFn, weightedRandom, weightedRandomBy } from './rng';
 import { TeamRatings } from './teamRatings';
-import { PlayerRatingInput, PossessionOutcomeType, TeamInput } from './types';
+import { CourtZone, PlayerRatingInput, PlayType, PossessionOutcomeType, TeamInput } from './types';
 
 export interface TripResult {
   outcome: PossessionOutcomeType;
@@ -18,6 +18,9 @@ export interface TripResult {
   blockPlayerId?: string;
   freeThrowsMade?: number;
   freeThrowsAttempted?: number;
+  playType: PlayType;
+  startLocation: CourtZone;
+  endLocation: CourtZone;
 }
 
 // Rough NBA norms used to add realistic texture beyond the primary
@@ -26,6 +29,23 @@ const ASSIST_ON_MAKE_PROBABILITY = 0.55;
 const LIVE_BALL_STEAL_PROBABILITY = 0.6;
 const BLOCK_ON_MISS_PROBABILITY = 0.15;
 const THREE_SHOT_FOUL_PROBABILITY = 0.15; // vs. 2-shot foul
+// Real NBA 2PA shot profiles skew toward the rim; not a rigorous model,
+// just a reasonable default so 2-point attempts aren't a uniform coin flip.
+const PAINT_SHOT_PROBABILITY = 0.6;
+const THREE_POINT_ZONES: CourtZone[] = ['three_left', 'three_right', 'three_top'];
+
+/**
+ * Picks a simplified court zone for a shot attempt (spec section 4a) — not
+ * a real court coordinate, just enough for a schematic animation to know
+ * roughly where the shot came from. Every shot's ball ends up at the hoop
+ * ('paint'), whether it goes in or not; only the start zone varies.
+ */
+function pickShotZone(isThree: boolean, rand: RandomFn): CourtZone {
+  if (isThree) {
+    return THREE_POINT_ZONES[Math.floor(rand() * THREE_POINT_ZONES.length)];
+  }
+  return rand() < PAINT_SHOT_PROBABILITY ? 'paint' : 'mid_range';
+}
 
 function pickShooterForMake(
   offense: PlayerRatingInput[],
@@ -77,11 +97,23 @@ export function simulateTrip(
       const turnoverPlayer = weightedRandomBy(offense.players, (p) => p.usageRate, rand);
       const stealPlayer =
         rand() < LIVE_BALL_STEAL_PROBABILITY ? weightedRandomBy(defense.players, (p) => p.stealRate, rand) : undefined;
-      return { outcome, points: 0, turnoverPlayerId: turnoverPlayer.id, stealPlayerId: stealPlayer?.id };
+      return {
+        outcome,
+        points: 0,
+        turnoverPlayerId: turnoverPlayer.id,
+        stealPlayerId: stealPlayer?.id,
+        playType: stealPlayer ? 'steal' : 'turnover',
+        // Fixed, undramatic zones — a turnover isn't a shot attempt, so
+        // there's no shot location to randomize; this just represents
+        // "the ball changes hands out front and heads back the other way".
+        startLocation: 'mid_range',
+        endLocation: 'backcourt',
+      };
     }
 
     case 'miss_def_reb': {
       const { shooter, isThree } = pickShooterForMiss(offense.players, rand);
+      const shotZone = pickShotZone(isThree, rand);
       const blockPlayer =
         rand() < BLOCK_ON_MISS_PROBABILITY ? weightedRandomBy(defense.players, (p) => p.blockRate, rand) : undefined;
       const rebounder = weightedRandomBy(defense.players, (p) => p.reboundRate, rand);
@@ -93,11 +125,15 @@ export function simulateTrip(
         madeShot: false,
         blockPlayerId: blockPlayer?.id,
         reboundPlayerId: rebounder.id,
+        playType: blockPlayer ? 'block' : isThree ? 'three_pointer_missed' : 'two_pointer_missed',
+        startLocation: shotZone,
+        endLocation: 'paint',
       };
     }
 
     case 'miss_off_reb': {
       const { shooter, isThree } = pickShooterForMiss(offense.players, rand);
+      const shotZone = pickShotZone(isThree, rand);
       const rebounder = weightedRandomBy(offense.players, (p) => p.reboundRate, rand);
       return {
         outcome,
@@ -106,13 +142,18 @@ export function simulateTrip(
         isThreePointAttempt: isThree,
         madeShot: false,
         reboundPlayerId: rebounder.id,
+        playType: 'offensive_rebound',
+        startLocation: shotZone,
+        endLocation: 'paint',
       };
     }
 
     case 'make_2':
     case 'make_3': {
       const shooter = pickShooterForMake(offense.players, outcome, rand);
-      const points = outcome === 'make_2' ? 2 : 3;
+      const isThree = outcome === 'make_3';
+      const shotZone = pickShotZone(isThree, rand);
+      const points = isThree ? 3 : 2;
       let assisterId: string | undefined;
       if (rand() < ASSIST_ON_MAKE_PROBABILITY) {
         const teammates = offense.players.filter((p) => p.id !== shooter.id);
@@ -122,9 +163,12 @@ export function simulateTrip(
         outcome,
         points,
         shooterId: shooter.id,
-        isThreePointAttempt: outcome === 'make_3',
+        isThreePointAttempt: isThree,
         madeShot: true,
         assisterId,
+        playType: isThree ? 'three_pointer_made' : 'two_pointer_made',
+        startLocation: shotZone,
+        endLocation: 'paint',
       };
     }
 
@@ -137,6 +181,9 @@ export function simulateTrip(
         shooterId: shooter.id,
         freeThrowsMade: made,
         freeThrowsAttempted: attempted,
+        playType: 'free_throw',
+        startLocation: 'free_throw_line',
+        endLocation: 'paint',
       };
     }
   }

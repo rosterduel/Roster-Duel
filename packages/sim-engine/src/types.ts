@@ -59,6 +59,46 @@ export type PossessionOutcomeType =
   | 'make_3'
   | 'ft_trip';
 
+/**
+ * A simplified NBA court zone — enough to drive a schematic GameCast-style
+ * animation (spec section 4a), not real x/y coordinates. NBA-only for
+ * Phase 1; NFL's equivalent (yard line + direction) isn't built yet since
+ * NFL itself is Phase 2.
+ */
+export type CourtZone =
+  | 'paint'
+  | 'mid_range'
+  | 'three_left'
+  | 'three_right'
+  | 'three_top'
+  | 'free_throw_line'
+  | 'backcourt';
+
+/**
+ * Categorizes a trip for animation purposes (spec section 4a: "play-type
+ * category ... so the frontend knows which simple animation to render").
+ * Derived entirely from data the sim already tracks (outcome, three-point
+ * flag, make/miss, steal/block attribution) — no new simulation mechanics,
+ * just a frontend-friendly label for what already happened.
+ *
+ * No standalone 'defensive_rebound' type: an unblocked miss is already
+ * fully described by its shot type (two/three_pointer_missed) — who
+ * rebounds it doesn't change what animation plays. 'offensive_rebound' DOES
+ * get its own type because it's a different game-flow event, not just a
+ * missed-shot flavor: the possession continues instead of ending, which is
+ * the kind of thing a schematic animation should visually distinguish.
+ */
+export type PlayType =
+  | 'three_pointer_made'
+  | 'three_pointer_missed'
+  | 'two_pointer_made'
+  | 'two_pointer_missed'
+  | 'free_throw'
+  | 'steal'
+  | 'turnover'
+  | 'block'
+  | 'offensive_rebound';
+
 export interface PossessionEvent {
   possessionIndex: number;
   offenseTeamId: string;
@@ -80,6 +120,11 @@ export interface PossessionEvent {
   offenseMarginAfter: number;
   /** Signed swing in the offense team's win probability caused by this event. */
   leverageScore: number;
+  playType: PlayType;
+  /** Where the ball/play originates for a schematic animation. */
+  startLocation: CourtZone;
+  /** Where the ball/play ends up. */
+  endLocation: CourtZone;
 }
 
 export interface Highlight {
@@ -93,6 +138,9 @@ export interface Highlight {
   outcome: PossessionOutcomeType;
   scoreAAfter: number;
   scoreBAfter: number;
+  playType: PlayType;
+  startLocation: CourtZone;
+  endLocation: CourtZone;
 }
 
 export interface TeamGameResult {

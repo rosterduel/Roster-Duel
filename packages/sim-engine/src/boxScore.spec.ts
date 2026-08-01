@@ -42,6 +42,9 @@ describe('applyTripToBoxScore', () => {
       isThreePointAttempt: true,
       madeShot: true,
       assisterId: 'passer',
+      playType: 'three_pointer_made',
+      startLocation: 'three_top',
+      endLocation: 'paint',
     };
 
     applyTripToBoxScore(offense, defense, trip);
@@ -68,6 +71,9 @@ describe('applyTripToBoxScore', () => {
       madeShot: false,
       reboundPlayerId: 'rebounder',
       blockPlayerId: 'blocker',
+      playType: 'block',
+      startLocation: 'paint',
+      endLocation: 'paint',
     };
 
     applyTripToBoxScore(offense, defense, trip);
@@ -88,6 +94,9 @@ describe('applyTripToBoxScore', () => {
       points: 0,
       shooterId: 'shooter',
       reboundPlayerId: 'offRebounder',
+      playType: 'offensive_rebound',
+      startLocation: 'mid_range',
+      endLocation: 'paint',
     };
 
     applyTripToBoxScore(offense, defense, trip);
@@ -104,6 +113,9 @@ describe('applyTripToBoxScore', () => {
       points: 0,
       turnoverPlayerId: 'ballhandler',
       stealPlayerId: 'defender',
+      playType: 'steal',
+      startLocation: 'mid_range',
+      endLocation: 'backcourt',
     };
 
     applyTripToBoxScore(offense, defense, trip);
@@ -121,6 +133,9 @@ describe('applyTripToBoxScore', () => {
       shooterId: 'shooter',
       freeThrowsMade: 2,
       freeThrowsAttempted: 2,
+      playType: 'free_throw',
+      startLocation: 'free_throw_line',
+      endLocation: 'paint',
     };
 
     applyTripToBoxScore(offense, defense, trip);

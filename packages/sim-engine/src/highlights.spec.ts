@@ -13,6 +13,9 @@ function event(overrides: Partial<PossessionEvent>): PossessionEvent {
     scoreB: 98,
     offenseMarginAfter: 2,
     leverageScore: 0.3,
+    playType: 'three_pointer_made',
+    startLocation: 'three_top',
+    endLocation: 'paint',
     ...overrides,
   };
 }

@@ -125,6 +125,9 @@ export function simulateGame(options: SimulateGameOptions): GameResult {
           scoreB,
           offenseMarginAfter: marginAfterOffense,
           leverageScore: winProbAfter - winProbBefore,
+          playType: trip.playType,
+          startLocation: trip.startLocation,
+          endLocation: trip.endLocation,
         });
 
         possessionIndex++;
