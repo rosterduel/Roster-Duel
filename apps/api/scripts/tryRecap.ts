@@ -12,7 +12,7 @@
  */
 import 'dotenv/config';
 import { simulateGame, TeamInput } from '@roster-duel/sim-engine';
-import { NBA_SEED_PLAYERS } from '../prisma/seedData/nbaPlayers';
+import { NBA_SEED_STINTS } from '../prisma/seedData/nbaStints';
 import { createAnthropicRecapGenerator } from '../src/recap/anthropicRecapGenerator';
 import { generateGameRecap, toRecapPromptInput } from '../src/recap/generateGameRecap';
 import { validateRecapGrounding } from '../src/recap/validateRecapGrounding';
@@ -68,7 +68,7 @@ async function main() {
   console.log('='.repeat(70));
   console.log(recap.article);
 
-  const knownRealPlayerNames = NBA_SEED_PLAYERS.map((p) => p.name);
+  const knownRealPlayerNames = [...new Set(NBA_SEED_STINTS.map((s) => s.name))];
   const issues = validateRecapGrounding(recap, toRecapPromptInput(game), knownRealPlayerNames);
   console.log('\n' + '='.repeat(70));
   if (issues.length === 0) {

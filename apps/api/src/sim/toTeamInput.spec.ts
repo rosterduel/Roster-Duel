@@ -1,27 +1,30 @@
 import { Prisma } from '@prisma/client';
-import { PlayerWithStatsAndRating, toPlayerRatingInput, toTeamInput } from './toTeamInput';
+import { StintWithStatsAndRating, toPlayerRatingInput, toTeamInput } from './toTeamInput';
 
-function stat(playerId: string, statKey: string, value: number): PlayerWithStatsAndRating['stats'][number] {
+function stat(stintId: string, statKey: string, value: number): StintWithStatsAndRating['stats'][number] {
   return {
-    id: `${playerId}-${statKey}`,
-    playerId,
+    id: `${stintId}-${statKey}`,
+    stintId,
     statKey,
     statValue: new Prisma.Decimal(value),
-    scope: 'career',
+    scope: 'stint',
   };
 }
 
-function makePlayer(overrides: Partial<PlayerWithStatsAndRating> = {}): PlayerWithStatsAndRating {
-  const id = overrides.id ?? 'player-1';
+function makeStint(overrides: Partial<StintWithStatsAndRating> = {}): StintWithStatsAndRating {
+  const id = overrides.id ?? 'stint-1';
   return {
     id,
     sport: 'nba',
+    personKey: 'test_player',
     name: 'Test Player',
     primaryPosition: 'PG',
-    eraStartYear: 2000,
-    eraEndYear: 2015,
+    teamId: 'team-1',
+    era: 'nineties',
+    stintStartYear: 1993,
+    stintEndYear: 1997,
     isActive: false,
-    photoUrl: null,
+    skinTone: 'medium',
     stats: [
       stat(id, 'ast_rate', 0.3),
       stat(id, 'reb_rate', 0.08),
@@ -31,7 +34,7 @@ function makePlayer(overrides: Partial<PlayerWithStatsAndRating> = {}): PlayerWi
       stat(id, 'ft_pct', 0.85),
     ],
     rating: {
-      playerId: id,
+      stintId: id,
       baseRating: new Prisma.Decimal(60),
       offenseRating: new Prisma.Decimal(65),
       defenseRating: new Prisma.Decimal(52),
@@ -44,12 +47,12 @@ function makePlayer(overrides: Partial<PlayerWithStatsAndRating> = {}): PlayerWi
 }
 
 describe('toPlayerRatingInput', () => {
-  it('maps offense/defense/usage from player_ratings and attribution rates from player_stats', () => {
-    const player = makePlayer();
-    const input = toPlayerRatingInput(player);
+  it('maps offense/defense/usage from player_stint_ratings and attribution rates from player_stint_stats', () => {
+    const stint = makeStint();
+    const input = toPlayerRatingInput(stint);
 
     expect(input).toEqual({
-      id: player.id,
+      id: stint.id,
       name: 'Test Player',
       position: 'PG',
       offenseRating: 65,
@@ -64,26 +67,26 @@ describe('toPlayerRatingInput', () => {
     });
   });
 
-  it('throws if the player has no computed rating', () => {
-    const player = makePlayer({ rating: null });
-    expect(() => toPlayerRatingInput(player)).toThrow(/no computed rating/);
+  it('throws if the stint has no computed rating', () => {
+    const stint = makeStint({ rating: null });
+    expect(() => toPlayerRatingInput(stint)).toThrow(/no computed rating/);
   });
 
   it('throws for a non-NBA position', () => {
-    const player = makePlayer({ primaryPosition: 'QB' });
-    expect(() => toPlayerRatingInput(player)).toThrow(/non-NBA position/);
+    const stint = makeStint({ primaryPosition: 'QB' });
+    expect(() => toPlayerRatingInput(stint)).toThrow(/non-NBA position/);
   });
 
   it('throws if a required stat is missing', () => {
-    const player = makePlayer({ stats: [stat('player-1', 'ast_rate', 0.3)] });
-    expect(() => toPlayerRatingInput(player)).toThrow(/missing required stat "reb_rate"/);
+    const stint = makeStint({ stats: [stat('stint-1', 'ast_rate', 0.3)] });
+    expect(() => toPlayerRatingInput(stint)).toThrow(/missing required stat "reb_rate"/);
   });
 });
 
 describe('toTeamInput', () => {
-  it('wraps mapped players with team identity', () => {
-    const players = [makePlayer({ id: 'p1', name: 'A' }), makePlayer({ id: 'p2', name: 'B', primaryPosition: 'SG' })];
-    const team = toTeamInput('team-a', 'Team Alpha', players);
+  it('wraps mapped stints with team identity', () => {
+    const stints = [makeStint({ id: 's1', name: 'A' }), makeStint({ id: 's2', name: 'B', primaryPosition: 'SG' })];
+    const team = toTeamInput('team-a', 'Team Alpha', stints);
 
     expect(team.teamId).toBe('team-a');
     expect(team.teamName).toBe('Team Alpha');

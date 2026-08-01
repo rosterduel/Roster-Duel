@@ -241,10 +241,10 @@ export class MatchesService {
   }
 
   private async loadRatedCandidates(): Promise<RatedCandidate[]> {
-    const players = await this.prisma.player.findMany({ where: { sport: 'nba' }, include: { rating: true } });
-    return players
-      .filter((p) => p.rating !== null)
-      .map((p) => ({ id: p.id, position: p.primaryPosition, baseRating: Number(p.rating!.baseRating) }));
+    const stints = await this.prisma.playerStint.findMany({ where: { sport: 'nba' }, include: { rating: true } });
+    return stints
+      .filter((s) => s.rating !== null)
+      .map((s) => ({ id: s.id, position: s.primaryPosition, baseRating: Number(s.rating!.baseRating) }));
   }
 
   /** Called once a roster becomes locked (manually or via timer) — notifies the room, and runs the sim once both sides are in. */
@@ -334,19 +334,19 @@ export class MatchesService {
   }
 
   private async loadRosterPlayers(slots: Record<string, string>) {
-    const playerIds = Object.values(slots).filter(Boolean);
-    const players = await this.prisma.player.findMany({
-      where: { id: { in: playerIds } },
+    const stintIds = Object.values(slots).filter(Boolean);
+    const stints = await this.prisma.playerStint.findMany({
+      where: { id: { in: stintIds } },
       include: { stats: true, rating: true },
     });
     // Preserve draft-slot order (PG..6MAN) rather than whatever order the DB returns.
-    return NBA_POSITIONS.map((pos) => players.find((p) => p.id === slots[pos])).filter((p): p is NonNullable<typeof p> => Boolean(p));
+    return NBA_POSITIONS.map((pos) => stints.find((s) => s.id === slots[pos])).filter((s): s is NonNullable<typeof s> => Boolean(s));
   }
 
-  private async assertPlayersExist(playerIds: string[]): Promise<void> {
-    if (playerIds.length === 0) return;
-    const count = await this.prisma.player.count({ where: { id: { in: playerIds }, sport: 'nba' } });
-    if (count !== new Set(playerIds).size) {
+  private async assertPlayersExist(stintIds: string[]): Promise<void> {
+    if (stintIds.length === 0) return;
+    const count = await this.prisma.playerStint.count({ where: { id: { in: stintIds }, sport: 'nba' } });
+    if (count !== new Set(stintIds).size) {
       throw new BadRequestException('One or more selected players are invalid.');
     }
   }

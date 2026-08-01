@@ -1,9 +1,9 @@
-import { Player, PlayerRating, PlayerStat } from '@prisma/client';
+import { PlayerStint, PlayerStintRating, PlayerStintStat } from '@prisma/client';
 import { NbaPosition, PlayerRatingInput, TeamInput } from '@roster-duel/sim-engine';
 
-export type PlayerWithStatsAndRating = Player & {
-  stats: PlayerStat[];
-  rating: PlayerRating | null;
+export type StintWithStatsAndRating = PlayerStint & {
+  stats: PlayerStintStat[];
+  rating: PlayerStintRating | null;
 };
 
 export const NBA_POSITIONS: readonly NbaPosition[] = ['PG', 'SG', 'SF', 'PF', 'C', '6MAN'];
@@ -13,36 +13,41 @@ export function isNbaPosition(value: string): value is NbaPosition {
 }
 
 /**
- * Maps a seeded Player (with its stats and computed rating) into the shape
- * the sim engine's PlayerRatingInput expects. offense/defense ratings and
- * usage_rate come from player_ratings (computed offline); the per-trip
- * attribution rates come from player_stats, matching how the seed script
- * stored them (see prisma/seed.ts and computeRatings.ts for the split).
+ * Maps a seeded PlayerStint (with its stint-scoped stats and computed
+ * rating — see schema.prisma's PlayerStint doc comment for why a stint,
+ * not a career player, is the draftable unit as of spec section 4c) into
+ * the shape the sim engine's PlayerRatingInput expects. offense/defense
+ * ratings and usage_rate come from player_stint_ratings (computed
+ * offline); the per-trip attribution rates come from player_stint_stats,
+ * matching how the seed script stored them (see prisma/seed.ts and
+ * computeRatings.ts for the split). The sim engine itself is unaware this
+ * ID refers to a stint rather than a person — nothing downstream of this
+ * adapter needed to change.
  */
-export function toPlayerRatingInput(player: PlayerWithStatsAndRating): PlayerRatingInput {
-  if (!player.rating) {
-    throw new Error(`Player "${player.name}" (${player.id}) has no computed rating — run the seed/rating pipeline first.`);
+export function toPlayerRatingInput(stint: StintWithStatsAndRating): PlayerRatingInput {
+  if (!stint.rating) {
+    throw new Error(`Stint "${stint.name}" (${stint.id}) has no computed rating — run the seed/rating pipeline first.`);
   }
-  if (!isNbaPosition(player.primaryPosition)) {
-    throw new Error(`Player "${player.name}" has non-NBA position "${player.primaryPosition}" — this adapter is NBA-only for Phase 1.`);
+  if (!isNbaPosition(stint.primaryPosition)) {
+    throw new Error(`Stint "${stint.name}" has non-NBA position "${stint.primaryPosition}" — this adapter is NBA-only for Phase 1.`);
   }
 
-  const statByKey = new Map(player.stats.map((s) => [s.statKey, Number(s.statValue)]));
+  const statByKey = new Map(stint.stats.map((s) => [s.statKey, Number(s.statValue)]));
   const requiredStat = (key: string): number => {
     const value = statByKey.get(key);
     if (value === undefined) {
-      throw new Error(`Player "${player.name}" is missing required stat "${key}"`);
+      throw new Error(`Stint "${stint.name}" is missing required stat "${key}"`);
     }
     return value;
   };
 
   return {
-    id: player.id,
-    name: player.name,
-    position: player.primaryPosition,
-    offenseRating: Number(player.rating.offenseRating),
-    defenseRating: Number(player.rating.defenseRating),
-    usageRate: Number(player.rating.usageRate),
+    id: stint.id,
+    name: stint.name,
+    position: stint.primaryPosition,
+    offenseRating: Number(stint.rating.offenseRating),
+    defenseRating: Number(stint.rating.defenseRating),
+    usageRate: Number(stint.rating.usageRate),
     assistRate: requiredStat('ast_rate'),
     reboundRate: requiredStat('reb_rate'),
     stealRate: requiredStat('stl_rate'),
@@ -52,10 +57,10 @@ export function toPlayerRatingInput(player: PlayerWithStatsAndRating): PlayerRat
   };
 }
 
-export function toTeamInput(teamId: string, teamName: string, players: PlayerWithStatsAndRating[]): TeamInput {
+export function toTeamInput(teamId: string, teamName: string, stints: StintWithStatsAndRating[]): TeamInput {
   return {
     teamId,
     teamName,
-    players: players.map(toPlayerRatingInput),
+    players: stints.map(toPlayerRatingInput),
   };
 }

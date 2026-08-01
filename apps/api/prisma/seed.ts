@@ -1,13 +1,14 @@
 import { PrismaClient } from '@prisma/client';
 import { computeRatings, RawPlayerStats } from '../src/ratings/computeRatings';
-import { NBA_SEED_PLAYERS, SeedPlayer } from './seedData/nbaPlayers';
+import { NBA_SEED_TEAMS } from './seedData/teams';
+import { NBA_SEED_STINTS, SeedPlayerStint } from './seedData/nbaStints';
 
 const prisma = new PrismaClient();
 
 const CLUTCH_MODIFIER_DEFAULT = 1.0;
 
-function statRows(playerId: string, stats: SeedPlayer['stats']) {
-  const scope = 'career';
+function statRows(stintId: string, stats: SeedPlayerStint['stats']) {
+  const scope = 'stint';
   return [
     { statKey: 'ppg', statValue: stats.ppg },
     { statKey: 'rpg', statValue: stats.rpg },
@@ -23,90 +24,116 @@ function statRows(playerId: string, stats: SeedPlayer['stats']) {
     { statKey: 'reb_rate', statValue: stats.rebRate },
     { statKey: 'stl_rate', statValue: stats.stlRate },
     { statKey: 'blk_rate', statValue: stats.blkRate },
-  ].map((row) => ({ playerId, scope, ...row }));
+  ].map((row) => ({ stintId, scope, ...row }));
 }
 
 async function main() {
-  console.log(`Seeding ${NBA_SEED_PLAYERS.length} NBA players...`);
+  // Step 1: upsert teams (spec 4c — city/moniker + cosmetic color).
+  console.log(`Seeding ${NBA_SEED_TEAMS.length} teams...`);
+  const teamIdByName = new Map<string, string>();
+  for (const seedTeam of NBA_SEED_TEAMS) {
+    const team = await prisma.team.upsert({
+      where: { sport_name: { sport: 'nba', name: seedTeam.name } },
+      update: { colorHex: seedTeam.colorHex },
+      create: { sport: 'nba', name: seedTeam.name, colorHex: seedTeam.colorHex },
+    });
+    teamIdByName.set(seedTeam.name, team.id);
+  }
 
-  // Step 1: upsert player identity rows and their raw stats.
-  const playerIdByName = new Map<string, string>();
-  for (const seedPlayer of NBA_SEED_PLAYERS) {
-    const player = await prisma.player.upsert({
-      where: { sport_name: { sport: 'nba', name: seedPlayer.name } },
+  // Step 2: upsert stint identity rows and their raw stats. Natural key is
+  // (sport, team, era, name) — a real person can have multiple stint rows
+  // (see nbaStints.ts's LeBron/Ray Allen/Karl Malone examples), so identity
+  // is per-stint, not per-person.
+  console.log(`Seeding ${NBA_SEED_STINTS.length} player stints...`);
+  const stintIdByNaturalKey = new Map<string, string>();
+  for (const seedStint of NBA_SEED_STINTS) {
+    const teamId = teamIdByName.get(seedStint.team);
+    if (!teamId) throw new Error(`Stint "${seedStint.name}" references unknown team "${seedStint.team}"`);
+
+    const stint = await prisma.playerStint.upsert({
+      where: { sport_teamId_era_name: { sport: 'nba', teamId, era: seedStint.era, name: seedStint.name } },
       update: {
-        primaryPosition: seedPlayer.position,
-        eraStartYear: seedPlayer.eraStartYear,
-        eraEndYear: seedPlayer.eraEndYear,
-        isActive: seedPlayer.isActive,
+        personKey: seedStint.personKey,
+        primaryPosition: seedStint.position,
+        stintStartYear: seedStint.stintStartYear,
+        stintEndYear: seedStint.stintEndYear,
+        isActive: false,
+        skinTone: seedStint.skinTone,
       },
       create: {
         sport: 'nba',
-        name: seedPlayer.name,
-        primaryPosition: seedPlayer.position,
-        eraStartYear: seedPlayer.eraStartYear,
-        eraEndYear: seedPlayer.eraEndYear,
-        isActive: seedPlayer.isActive,
+        personKey: seedStint.personKey,
+        name: seedStint.name,
+        primaryPosition: seedStint.position,
+        teamId,
+        era: seedStint.era,
+        stintStartYear: seedStint.stintStartYear,
+        stintEndYear: seedStint.stintEndYear,
+        isActive: false,
+        skinTone: seedStint.skinTone,
       },
     });
-    playerIdByName.set(seedPlayer.name, player.id);
+    stintIdByNaturalKey.set(`${seedStint.team}|${seedStint.era}|${seedStint.name}`, stint.id);
 
-    for (const row of statRows(player.id, seedPlayer.stats)) {
-      await prisma.playerStat.upsert({
-        where: { playerId_statKey_scope: { playerId: row.playerId, statKey: row.statKey, scope: row.scope } },
+    for (const row of statRows(stint.id, seedStint.stats)) {
+      await prisma.playerStintStat.upsert({
+        where: { stintId_statKey_scope: { stintId: row.stintId, statKey: row.statKey, scope: row.scope } },
         update: { statValue: row.statValue },
         create: row,
       });
     }
   }
 
-  // Step 2: compute composite ratings offline, from the raw stats just
+  // Step 3: compute composite ratings offline, from the raw stats just
   // written — matches spec section 6's "recalculated offline, not live".
   // Z-scored against this seed pool itself (see computeRatings.ts for why
-  // that's a Phase 1 limitation, not the long-term design).
-  const ratingInputs: RawPlayerStats[] = NBA_SEED_PLAYERS.map((seedPlayer) => ({
-    playerId: playerIdByName.get(seedPlayer.name)!,
-    position: seedPlayer.position,
-    ppg: seedPlayer.stats.ppg,
-    rpg: seedPlayer.stats.rpg,
-    apg: seedPlayer.stats.apg,
-    spg: seedPlayer.stats.spg,
-    bpg: seedPlayer.stats.bpg,
-    fgPct: seedPlayer.stats.fgPct,
-    threePtPct: seedPlayer.stats.threePtPct,
-    astRate: seedPlayer.stats.astRate,
-    rebRate: seedPlayer.stats.rebRate,
-    stlRate: seedPlayer.stats.stlRate,
-    blkRate: seedPlayer.stats.blkRate,
+  // that's a Phase 1 limitation, not the long-term design) — computed per
+  // stint now, not per career player, but the formula itself is unchanged.
+  const ratingInputs: RawPlayerStats[] = NBA_SEED_STINTS.map((seedStint) => ({
+    playerId: stintIdByNaturalKey.get(`${seedStint.team}|${seedStint.era}|${seedStint.name}`)!,
+    position: seedStint.position,
+    ppg: seedStint.stats.ppg,
+    rpg: seedStint.stats.rpg,
+    apg: seedStint.stats.apg,
+    spg: seedStint.stats.spg,
+    bpg: seedStint.stats.bpg,
+    fgPct: seedStint.stats.fgPct,
+    threePtPct: seedStint.stats.threePtPct,
+    astRate: seedStint.stats.astRate,
+    rebRate: seedStint.stats.rebRate,
+    stlRate: seedStint.stats.stlRate,
+    blkRate: seedStint.stats.blkRate,
   }));
   const ratings = computeRatings(ratingInputs);
 
-  const usageRateByPlayerId = new Map(
-    NBA_SEED_PLAYERS.map((seedPlayer) => [playerIdByName.get(seedPlayer.name)!, seedPlayer.usageRate]),
+  const usageRateByStintId = new Map(
+    NBA_SEED_STINTS.map((seedStint) => [stintIdByNaturalKey.get(`${seedStint.team}|${seedStint.era}|${seedStint.name}`)!, seedStint.usageRate]),
   );
 
   for (const rating of ratings) {
-    await prisma.playerRating.upsert({
-      where: { playerId: rating.playerId },
+    await prisma.playerStintRating.upsert({
+      where: { stintId: rating.playerId },
       update: {
         baseRating: rating.baseRating,
         offenseRating: rating.offenseRating,
         defenseRating: rating.defenseRating,
         clutchModifier: CLUTCH_MODIFIER_DEFAULT,
-        usageRate: usageRateByPlayerId.get(rating.playerId)!,
+        usageRate: usageRateByStintId.get(rating.playerId)!,
       },
       create: {
-        playerId: rating.playerId,
+        stintId: rating.playerId,
         baseRating: rating.baseRating,
         offenseRating: rating.offenseRating,
         defenseRating: rating.defenseRating,
         clutchModifier: CLUTCH_MODIFIER_DEFAULT,
-        usageRate: usageRateByPlayerId.get(rating.playerId)!,
+        usageRate: usageRateByStintId.get(rating.playerId)!,
       },
     });
   }
 
-  console.log(`Seeded ${NBA_SEED_PLAYERS.length} players, ${NBA_SEED_PLAYERS.length * 14} stat rows, and ${ratings.length} rating rows.`);
+  console.log(
+    `Seeded ${NBA_SEED_TEAMS.length} teams, ${NBA_SEED_STINTS.length} stints, ${NBA_SEED_STINTS.length * 14} stat rows, and ${ratings.length} rating rows.`,
+  );
 }
 
 main()

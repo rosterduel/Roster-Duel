@@ -1,7 +1,7 @@
-// Data model — spec section 3 (players / player_stats / player_ratings) plus
-// section 4's users / rosters / matches / game_results, adapted for Phase 1
-// scope. Key adaptations from the spec's schema, decided when this landed
-// (see README "Draft flow & matchmaking" for the full reasoning):
+// Data model — spec section 3 plus section 4's users / rosters / matches /
+// game_results, adapted for Phase 1 scope. Key adaptations from the spec's
+// schema, decided when this landed (see README "Draft flow & matchmaking"
+// for the full reasoning):
 //
 // - No auth (Phase 1 spec: "anonymous sessions"): `users.session_token` is a
 //   random UUID the *client* generates and persists in localStorage, sent as
@@ -20,6 +20,12 @@
 // - `draft_deadline` + `is_locked`/`locked_at` are Phase-1-specific additions
 //   (not in the spec's literal schema) needed to implement the draft timer
 //   and blind-reveal-on-lock behavior from spec section 4.
+//
+// spec section 3's original `players` / `player_stats` / `player_ratings`
+// (one row per real person, career-aggregated) is SUPERSEDED by spec
+// section 4c's team+era stint redesign — see the `PlayerStint` doc comment
+// below. This was a breaking rebuild (old tables dropped, not migrated —
+// this is a dev DB with no real user data to preserve).
 
 generator client {
   provider = "prisma-client-js"
@@ -46,56 +52,125 @@ enum MatchType {
   random_matchmaking
 }
 
-// One row per player per sport, career-aggregated identity fields.
-model Player {
-  id              String  @id @default(uuid())
-  sport           Sport
-  name            String
-  // Not a Prisma enum: NBA (PG/SG/SF/PF/C/6MAN) and NFL (QB/RB/WR/...) use
-  // different position vocabularies, and this stays a plain string so a
-  // second sport's positions don't require a schema migration later —
-  // consistent with treating "sport" as a pluggable module (spec section 1).
-  primaryPosition String  @map("primary_position")
-  eraStartYear    Int     @map("era_start_year")
-  // Null for still-active players — no end year yet.
-  eraEndYear      Int?    @map("era_end_year")
-  isActive        Boolean @map("is_active")
-  // Deliberately left unpopulated in Phase 1 seed data — spec section 10's
-  // legal notes: names + stats only, no images/likeness.
-  photoUrl        String? @map("photo_url")
-
-  stats  PlayerStat[]
-  rating PlayerRating?
-
-  // Lets the seed script upsert idempotently (safe to re-run) instead of
-  // duplicating players on every run — spec doesn't define a natural key
-  // for players, so this is the seed pipeline's own choice, not spec-driven.
-  @@unique([sport, name])
-  @@map("players")
+// Era buckets a team+era combo is randomly assigned from (spec 4c). Fixed,
+// small set rather than free-form years — matches the "Team + Era
+// combination" framing (e.g. "Miami + 2010s"), not arbitrary date ranges.
+enum Era {
+  sixties
+  seventies
+  eighties
+  nineties
+  two_thousands
+  twenty_tens
+  twenty_twenties
 }
 
-// Flexible per-player stat storage (avoids a 40-column table per sport).
-// stat_key examples: 'ppg','apg','rpg','spg','bpg','tov_pg','fg_pct',
+// Sprite personalization for the GameCast animation (spec 4a) is skin tone
+// only — no facial detail, no jersey/team accuracy. A small fixed palette
+// (not a hex color) keeps the sprite art bounded to a few pre-drawn
+// variants rather than needing per-player custom art.
+enum SkinTone {
+  light
+  medium
+  dark
+}
+
+// City/moniker only (e.g. "Chicago," "Utah") — NOT full franchise names or
+// logos, per spec 4c's trademark-avoidance guidance (section 10). colorHex
+// is a cosmetic, consistent-per-team visual cue for the draft screen; it
+// deliberately does not need to match real team branding (spec is explicit
+// about this) — picked for visual distinctiveness across the seeded teams,
+// not researched against real franchise colors.
+model Team {
+  id       String @id @default(uuid())
+  sport    Sport
+  name     String
+  colorHex String @map("color_hex")
+
+  stints PlayerStint[]
+
+  @@unique([sport, name])
+  @@map("teams")
+}
+
+// Spec 4c's core redesign: a real person becomes MULTIPLE rows here, one
+// per team+era stint, rather than the one-row-per-career-player shape
+// section 3 originally specified. Selecting "Miami + 2010s" for a draft
+// slot pulls whoever actually played for that team during that era, with
+// stats scoped to that specific stint (see PlayerStintStat) — not their
+// full career or even their full decade if they played for multiple teams
+// within it (e.g. LeBron James: a separate stint row for Cleveland/2000s
+// and for Miami/2010s, each with that stint's own numbers).
+//
+// `personKey` is a stable identity shared across a real person's stints
+// (e.g. "lebron_james") — deliberately a separate field rather than
+// relying on exact `name` string equality, so the "no duplicate real
+// person on one roster" rule (spec 4c) has a robust key to check even if
+// two different people ever shared a display name. It's set by hand at
+// seed time, not derived.
+//
+// No `photoUrl` here (unlike the old `players` table) — still names/stats
+// only per spec section 10's legal notes; skin tone is the one exception,
+// used only for the schematic GameCast sprite, not a photo/likeness.
+model PlayerStint {
+  id              String   @id @default(uuid())
+  sport           Sport
+  personKey       String   @map("person_key")
+  name            String
+  primaryPosition String   @map("primary_position")
+  teamId          String   @map("team_id")
+  team            Team     @relation(fields: [teamId], references: [id])
+  era             Era
+  stintStartYear  Int      @map("stint_start_year")
+  stintEndYear    Int      @map("stint_end_year")
+  // A stint is, by definition, a specific bounded period with one team —
+  // always false in this seed data, even for a person who is still an
+  // active NBA player elsewhere today, since this particular stint has
+  // ended. Kept (rather than dropped) for schema continuity with the
+  // original `players.is_active` and in case a still-ongoing stint is
+  // seeded later.
+  isActive        Boolean  @map("is_active")
+  skinTone        SkinTone @map("skin_tone")
+
+  stats  PlayerStintStat[]
+  rating PlayerStintRating?
+
+  // Lets the seed script upsert idempotently. A real person can have
+  // multiple stints (different team+era), so uniqueness is per stint, not
+  // per person — (sport, team, era, name) is the natural key for "this
+  // specific stint."
+  @@unique([sport, teamId, era, name])
+  @@map("player_stints")
+}
+
+// Flexible per-stint stat storage — same shape/purpose as the original
+// player_stats, just scoped to a stint instead of a career. stat_key
+// examples unchanged: 'ppg','apg','rpg','spg','bpg','tov_pg','fg_pct',
 // 'three_pt_pct','three_pt_rate','ft_pct','ast_rate','reb_rate','stl_rate',
-// 'blk_rate'. scope examples: 'career','peak_3yr','last_season' — Phase 1
-// only populates 'career'.
-model PlayerStat {
-  id        String  @id @default(uuid())
-  playerId  String  @map("player_id")
-  player    Player  @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  statKey   String  @map("stat_key")
-  statValue Decimal @map("stat_value") @db.Decimal(8, 4)
+// 'blk_rate'. scope is 'stint' for every Phase 1 row (the original
+// 'career'/'peak_3yr'/'last_season' distinction doesn't apply once every
+// row already IS a bounded stint).
+model PlayerStintStat {
+  id        String      @id @default(uuid())
+  stintId   String      @map("stint_id")
+  stint     PlayerStint @relation(fields: [stintId], references: [id], onDelete: Cascade)
+  statKey   String      @map("stat_key")
+  statValue Decimal     @map("stat_value") @db.Decimal(8, 4)
   scope     String
 
-  @@unique([playerId, statKey, scope])
-  @@map("player_stats")
+  @@unique([stintId, statKey, scope])
+  @@map("player_stint_stats")
 }
 
 // Precomputed composite ratings — recalculated offline (spec section 6),
-// never computed live during a draft or sim.
-model PlayerRating {
-  playerId String @id @map("player_id")
-  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+// never computed live during a draft or sim. Same shape as the original
+// player_ratings; z-scored against stint-scoped stats now (see
+// computeRatings.ts), which if anything gives more, not less, signal than
+// the original career-aggregate version since a stint's numbers reflect a
+// specific, shorter, more consistent stretch of play.
+model PlayerStintRating {
+  stintId String      @id @map("stint_id")
+  stint   PlayerStint @relation(fields: [stintId], references: [id], onDelete: Cascade)
 
   baseRating     Decimal  @map("base_rating") @db.Decimal(6, 2)
   offenseRating  Decimal  @map("offense_rating") @db.Decimal(6, 2)
@@ -103,13 +178,13 @@ model PlayerRating {
   // Multiplies base_rating in crunch time (spec section 5.4). Not yet
   // consumed by the sim engine — that mechanic is Phase 2 — but the column
   // exists now per spec's schema so no migration is needed when it lands.
-  // Defaults to 1.0 (neutral) for every Phase 1 seed player; see seed data
+  // Defaults to 1.0 (neutral) for every Phase 1 seed stint; see seed data
   // comments for why.
   clutchModifier Decimal  @map("clutch_modifier") @db.Decimal(4, 3)
   usageRate      Decimal  @map("usage_rate") @db.Decimal(5, 4)
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
 
-  @@map("player_ratings")
+  @@map("player_stint_ratings")
 }
 
 // Anonymous, session-token-identified "account" — see the file header for

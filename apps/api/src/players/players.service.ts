@@ -5,9 +5,16 @@ export interface PlayerSummaryDto {
   id: string;
   name: string;
   position: string;
-  eraStartYear: number;
-  eraEndYear: number | null;
+  /** Cross-stint identity — see schema.prisma's PlayerStint doc comment. Needed client-side for the spec 4c "no duplicate real person" rule, landing in the draft-flow rework. */
+  personKey: string;
+  teamId: string;
+  teamName: string;
+  teamColorHex: string;
+  era: string;
+  stintStartYear: number;
+  stintEndYear: number;
   isActive: boolean;
+  skinTone: string;
   baseRating: number;
   offenseRating: number;
   defenseRating: number;
@@ -21,31 +28,46 @@ export interface PlayerSummaryDto {
   stats: Record<string, number>;
 }
 
+/**
+ * INTERIM behavior notice: this still returns every stint at a position
+ * across all teams/eras undifferentiated — the exact "free browse" shape
+ * spec section 4c replaces with randomized team+era assignment. Kept
+ * working in this shape only so the app stays functional end-to-end
+ * through the data-model rebuild; the draft-flow step rebuilds this into
+ * team+era-scoped endpoints (and the frontend that consumes them). See
+ * README "Draft flow & matchmaking" for the full sequencing.
+ */
 @Injectable()
 export class PlayersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAllForDraft(sport: 'nba' | 'nfl'): Promise<PlayerSummaryDto[]> {
-    const players = await this.prisma.player.findMany({
+    const stints = await this.prisma.playerStint.findMany({
       where: { sport },
-      include: { stats: true, rating: true },
+      include: { stats: true, rating: true, team: true },
       orderBy: { name: 'asc' },
     });
 
-    return players
-      .filter((p) => p.rating !== null)
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        position: p.primaryPosition,
-        eraStartYear: p.eraStartYear,
-        eraEndYear: p.eraEndYear,
-        isActive: p.isActive,
-        baseRating: Number(p.rating!.baseRating),
-        offenseRating: Number(p.rating!.offenseRating),
-        defenseRating: Number(p.rating!.defenseRating),
-        clutchModifier: Number(p.rating!.clutchModifier),
-        stats: Object.fromEntries(p.stats.map((s) => [s.statKey, Number(s.statValue)])),
+    return stints
+      .filter((s) => s.rating !== null)
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        position: s.primaryPosition,
+        personKey: s.personKey,
+        teamId: s.teamId,
+        teamName: s.team.name,
+        teamColorHex: s.team.colorHex,
+        era: s.era,
+        stintStartYear: s.stintStartYear,
+        stintEndYear: s.stintEndYear,
+        isActive: s.isActive,
+        skinTone: s.skinTone,
+        baseRating: Number(s.rating!.baseRating),
+        offenseRating: Number(s.rating!.offenseRating),
+        defenseRating: Number(s.rating!.defenseRating),
+        clutchModifier: Number(s.rating!.clutchModifier),
+        stats: Object.fromEntries(s.stats.map((stat) => [stat.statKey, Number(stat.statValue)])),
       }));
   }
 }

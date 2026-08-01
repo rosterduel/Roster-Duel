@@ -23,13 +23,16 @@ apps/
       leaderboard/           Top-N by wins (random-matchmaking only)
   api/                 NestJS + TypeScript backend, Prisma ORM (Postgres)
     prisma/
-      schema.prisma      Full data model — players/player_stats/
-                          player_ratings (spec section 3) plus users/
-                          rosters/matches/game_results (spec section 4,
-                          adapted for Phase 1 — see "Draft flow &
-                          matchmaking" below)
+      schema.prisma      Full data model — teams/player_stints/
+                          player_stint_stats/player_stint_ratings (spec
+                          section 4c's team+era model, see "Team + era
+                          data model" below) plus users/rosters/matches/
+                          game_results (spec section 4, adapted for
+                          Phase 1 — see "Draft flow & matchmaking" below)
       seedData/
-        nbaPlayers.ts     36 hand-curated real NBA players (6/position)
+        teams.ts          12 hand-curated NBA teams (name + color)
+        nbaStints.ts       84 hand-curated player stints across 14
+                           team+era combos (spec section 4c)
       seed.ts             Seed script (npx prisma db seed)
     scripts/
       verifySimEndToEnd.ts  Standalone script proving DB -> sim-engine works
@@ -54,13 +57,20 @@ docker-compose.yml     Local Postgres + Redis
 
 Current status: **the full Phase 1 loop works end-to-end** — sim engine
 (with real overtime periods, GameCast animation data, and a Game MVP
-formula), the full data model (players/ratings + users/rosters/matches/
-game_results), a post-game recap generation service with a proper
-newspaper-masthead UI, the draft UI / friend-link matchmaking / results
-screen, and moderated display names + leaderboard/stats plumbing (spec
-9a) are all built and tested. See "Draft flow & matchmaking" and
-"Accounts, moderation & leaderboards" below for what's in Phase 1 scope
-vs. deferred.
+formula), the full data model (team+era player stints/ratings + users/
+rosters/matches/game_results), a post-game recap generation service with
+a proper newspaper-masthead UI, the draft UI / friend-link matchmaking /
+results screen, and moderated display names + leaderboard/stats plumbing
+(spec 9a) are all built and tested. See "Team + era data model", "Draft
+flow & matchmaking", and "Accounts, moderation & leaderboards" below for
+what's in Phase 1 scope vs. deferred.
+
+The data model just went through a breaking rebuild (spec section 4c's
+team+era draft pool) — see "Team + era data model" below for what changed
+and, importantly, what's *interim*: the draft UI/backend still do the old
+"free browse across all stints" behavior for now. The actual
+team+era-constrained draft flow (assignment, respins, duplicate-person
+grayout) is explicitly the next step, not yet built.
 
 ### Highlight animation data (spec section 4a)
 
@@ -171,7 +181,9 @@ prompt instruction isn't a guarantee. `validateRecapGrounding.ts` is a
 deterministic check run after generation that catches the two most
 concrete, checkable failure modes: the recap never actually naming the
 Game MVP, and the recap name-dropping a real player (checked against the
-wider 36-player seed catalog, not just this game's 12) who isn't actually
+wider 81-player seed catalog — deduplicated by name across all seeded
+team+era stints, see "Team + era data model" below — not just this
+game's 12) who isn't actually
 in this game's box score — the most plausible hallucination for a
 sports-writing model that has certainly seen these real names in training.
 It does **not** catch a fabricated stat line for a real rostered player, an
@@ -229,13 +241,14 @@ was already weighed against.
    npm run prisma:migrate -w apps/api
    ```
 
-5. Seed the database with the Phase 1 NBA player pool:
+5. Seed the database with the Phase 1 NBA team + stint pool:
 
    ```bash
    npm run db:seed -w apps/api
    ```
 
-   Safe to re-run — upserts by `(sport, name)`, won't duplicate players.
+   Safe to re-run — teams upsert by `(sport, name)`, stints upsert by
+   `(sport, teamId, era, name)`, won't duplicate rows.
 
 6. (Optional) copy the web app's env file — the default already points at
    `http://localhost:4000`, so this is only needed if you're running the
@@ -299,11 +312,79 @@ was already weighed against.
   during development — see the "Draft flow & matchmaking" section above
   for how blind draft and async timing are enforced server-side.
 
+## Team + era data model (spec section 4c)
+
+The original data model treated each real NBA player as a single row with
+one career-spanning rating. Spec section 4c's draft pool redesign — draft
+a **team + era combination**, not a free-floating player list — needed a
+different unit entirely, so the schema was rebuilt (not migrated forward
+piecemeal) around it:
+
+- **`Team`** — 12 hand-curated teams (`seedData/teams.ts`), each with a
+  cosmetic `colorHex` used for draft-board chips and (later) GameCast
+  jersey coloring.
+- **`PlayerStint`** — the draftable unit. A real player who played for
+  multiple teams, or the same team across different eras, becomes
+  **multiple rows** — one per team+era combination they're draftable
+  from — each with its own `stintStartYear`/`stintEndYear` and
+  stint-scoped (not career) stats. `era` is a fixed 7-value enum
+  (`sixties` through `twenty_twenties`) matching the spec's "Team + Era
+  combination" framing, not a free-text year range.
+- **`personKey`** — a stable, hand-authored identity string (e.g.
+  `lebron_james`) shared across one real person's multiple stint rows.
+  This is deliberate: the spec's "no duplicate real person on one roster"
+  rule (grayout mechanic, landing in the draft-flow step) needs to
+  recognize that a 2000s Cleveland stint and a 2010s Miami stint are *the
+  same person*, and matching on the `name` string alone is fragile
+  (nicknames, suffixes, punctuation). `seedData/nbaStints.ts` seeds three
+  deliberate cross-stint duplicates on purpose (LeBron James, Ray Allen,
+  Karl Malone) specifically so this case has real data to test against
+  before the draft-flow step builds the enforcement logic.
+- **`skinTone`** (`light`/`medium`/`dark`) was added to `PlayerStint` now,
+  a step ahead of when it's actually consumed, specifically to avoid a
+  second round of hand data-entry once the GameCast visual rebuild (spec
+  4a, a later step) needs it for shooting-motion sprites.
+- **`PlayerStintStat`** / **`PlayerStintRating`** replace the old
+  `PlayerStat`/`PlayerRating` tables 1:1 in shape, just keyed by
+  `stintId` instead of `playerId`. `computeRatings.ts` needed **zero
+  changes** — it only ever cared about a generic string ID, not what
+  entity it represents.
+- **Historical accuracy caveats** (documented in `nbaStints.ts`'s header
+  comment): there was no 3-point line before the 1979-80 season, so
+  `threePtRate`/`threePtPct` are `0` for every pre-1980 stint; steals,
+  blocks, and turnovers weren't official NBA stats before 1973-74, so the
+  two pre-1974 combos (Boston/sixties, New York/seventies) use
+  reasonable illustrative estimates for those specific stats rather than
+  sourced figures — called out explicitly rather than presented as real.
+
+**What's still interim:** `GET /players` (`players.service.ts`) still
+returns every stint at a position across all teams/eras undifferentiated
+— the old "free browse" shape — just repointed from `Player` to
+`PlayerStint` and enriched with the new fields (`personKey`, `teamId`,
+`teamName`, `teamColorHex`, `era`, `stintStartYear`/`stintEndYear`,
+`skinTone`). This was a deliberate choice to keep the app compiling and
+fully testable end-to-end through the rebuild rather than leaving it
+broken while the real team+era-constrained draft UI/backend gets built —
+that's explicitly the next step (random team+era assignment per slot,
+respins, era/team pre-match filters, and the duplicate-person grayout
+rule this section's `personKey` design exists to support), not something
+this step does.
+
+Verify the new model end-to-end (real seeded Postgres data → Prisma →
+`toTeamInput` adapter → `simulateGame`, including the LeBron cross-stint
+duplicate case) with:
+
+```bash
+npm run verify:sim -w apps/api -- 42
+```
+
 ## Draft flow & matchmaking (spec section 4)
 
 `apps/api/prisma/schema.prisma` now models the full data model — spec
-section 3 (`players`/`player_stats`/`player_ratings`) plus section 4
-(`users`/`rosters`/`matches`/`game_results`), adapted for Phase 1 scope.
+section 4c's team+era stint model (`teams`/`player_stints`/
+`player_stint_stats`/`player_stint_ratings`, see "Team + era data model"
+above) plus section 4 (`users`/`rosters`/`matches`/`game_results`),
+adapted for Phase 1 scope.
 Full reasoning is in the schema file's header comment; summary:
 
 - **No auth ("anonymous sessions")**: the browser generates its own random
@@ -430,17 +511,19 @@ Full reasoning is in the schema file's header comment; summary:
 
 ## Player data sourcing
 
-The Phase 1 seed pool (`apps/api/prisma/seedData/nbaPlayers.ts`) is **36
-real NBA players, hand-curated directly in code** — not scraped, not pulled
-from a bulk third-party dataset or a paid stats API. Per this project's
-ground rules (open/free data sources only, no scraping sites whose ToS
-might prohibit it), and given the spec's own legal notes flag exactly that
-risk, the seed set uses widely-known, publicly-cited career statistics
-(facts, not copyrightable expression) entered by hand — the same approach
-already used for the sim-engine's demo rosters, just a wider pool. The
-still-active players' numbers (Curry, LeBron, Durant, Harden, Giannis,
-Jokić) were spot-checked against web search since those are moving targets;
-retired players' career averages are long-settled facts. None of it is
+The Phase 1 seed pool (`apps/api/prisma/seedData/nbaStints.ts`) is **84
+hand-curated player stints across 14 team+era combinations** (see "Team +
+era data model" above for why the unit is a stint, not a player) — not
+scraped, not pulled from a bulk third-party dataset or a paid stats API.
+Per this project's ground rules (open/free data sources only, no scraping
+sites whose ToS might prohibit it), and given the spec's own legal notes
+flag exactly that risk, the seed set uses widely-known, publicly-cited
+stint-scoped statistics (facts, not copyrightable expression) entered by
+hand — the same approach already used for the sim-engine's demo rosters,
+just organized by team+era instead of by career. The still-active
+players' numbers (Curry, LeBron, Durant, Harden, Giannis, Jokić) were
+spot-checked against web search since those are moving targets; retired
+players' stint-era averages are long-settled facts. None of it is
 verified line-by-line against a canonical source — treat it as MVP
 placeholder data. The real pipeline (spec section 6: an offline batch job
 against a real open dataset) should replace this pool before any real
