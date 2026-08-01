@@ -121,11 +121,39 @@ request — that's the one call site the rest of the app should use.
 Structured output uses the SDK's `client.messages.parse()` with a Zod
 schema (`recapSchema.ts`), not free-form text parsing.
 
-**Testing**: `buildRecapPrompt.spec.ts` and `generateGameRecap.spec.ts` run
-with no network access at all, via `createFakeRecapGenerator()`
-(`testUtils.ts`) — a stand-in `RecapGenerator` that returns a fixed
-response. **A live Anthropic API key is only needed to actually call the
-real API** — none of the automated test suite requires one.
+**Testing**: `buildRecapPrompt.spec.ts`, `generateGameRecap.spec.ts`, and
+`validateRecapGrounding.spec.ts` run with no network access at all, via
+`createFakeRecapGenerator()` (`testUtils.ts`) — a stand-in `RecapGenerator`
+that returns a fixed response. **A live Anthropic API key is only needed
+to actually call the real API** — none of the automated test suite
+requires one.
+
+**Consistency with the highlights list and GameCast animation**: there is
+no separate recap-generation step that recomputes highlights or re-derives
+plays — `buildRecapPrompt.ts` is handed the exact same `GameResult.highlights`
+array (the same top-5, same order, same `playType`/`startLocation`/
+`endLocation` data) that both the written highlights list and the section
+4a GameCast animation consume. All three views read from one array
+produced once by `simulateGame()`, so the plays they show can't drift out
+of sync with each other by construction — there's nothing that recomputes
+"what happened" three separate times.
+
+What *isn't* guaranteed by construction is that the LLM's free-text prose
+stays faithful to that data — the system prompt instructs it to, but a
+prompt instruction isn't a guarantee. `validateRecapGrounding.ts` is a
+deterministic check run after generation that catches the two most
+concrete, checkable failure modes: the recap never actually naming the
+Game MVP, and the recap name-dropping a real player (checked against the
+wider 36-player seed catalog, not just this game's 12) who isn't actually
+in this game's box score — the most plausible hallucination for a
+sports-writing model that has certainly seen these real names in training.
+It does **not** catch a fabricated stat line for a real rostered player, an
+invented play, or a wrong score — reliably catching those would need a
+second model call to grade the first one's output, which doubles cost and
+latency; not worth it for Phase 1 on top of the prompt-level constraint
+already in place. `try:recap` runs this check and prints any issues found
+on every live call, so this is easy to revisit if spot-checks turn up
+hallucinations the current net misses.
 
 **⚠️ Needs a real API key to run for real.** Nothing in this repo has an
 `ANTHROPIC_API_KEY` configured — set one in `apps/api/.env` (see

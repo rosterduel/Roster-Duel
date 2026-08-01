@@ -10,8 +10,10 @@
  *   ANTHROPIC_API_KEY=sk-... npm run try:recap -w apps/api
  */
 import { simulateGame, TeamInput } from '@roster-duel/sim-engine';
+import { NBA_SEED_PLAYERS } from '../prisma/seedData/nbaPlayers';
 import { createAnthropicRecapGenerator } from '../src/recap/anthropicRecapGenerator';
-import { generateGameRecap } from '../src/recap/generateGameRecap';
+import { generateGameRecap, toRecapPromptInput } from '../src/recap/generateGameRecap';
+import { validateRecapGrounding } from '../src/recap/validateRecapGrounding';
 
 const teamLegends: TeamInput = {
   teamId: 'legends',
@@ -63,6 +65,16 @@ async function main() {
   console.log(recap.headline);
   console.log('='.repeat(70));
   console.log(recap.article);
+
+  const knownRealPlayerNames = NBA_SEED_PLAYERS.map((p) => p.name);
+  const issues = validateRecapGrounding(recap, toRecapPromptInput(game), knownRealPlayerNames);
+  console.log('\n' + '='.repeat(70));
+  if (issues.length === 0) {
+    console.log('Grounding check: OK — MVP is named, no unlisted real players mentioned.');
+  } else {
+    console.log(`Grounding check: ${issues.length} issue(s) found:`);
+    for (const issue of issues) console.log(`  - [${issue.type}] ${issue.detail}`);
+  }
 }
 
 main().catch((err) => {
