@@ -6,9 +6,9 @@ export type PlayerWithStatsAndRating = Player & {
   rating: PlayerRating | null;
 };
 
-const NBA_POSITIONS: readonly NbaPosition[] = ['PG', 'SG', 'SF', 'PF', 'C', '6MAN'];
+export const NBA_POSITIONS: readonly NbaPosition[] = ['PG', 'SG', 'SF', 'PF', 'C', '6MAN'];
 
-function isNbaPosition(value: string): value is NbaPosition {
+export function isNbaPosition(value: string): value is NbaPosition {
   return (NBA_POSITIONS as readonly string[]).includes(value);
 }
 

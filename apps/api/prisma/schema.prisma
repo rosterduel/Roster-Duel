@@ -1,11 +1,25 @@
-// Data model — spec section 3 only (players / player_stats / player_ratings).
+// Data model — spec section 3 (players / player_stats / player_ratings) plus
+// section 4's users / rosters / matches / game_results, adapted for Phase 1
+// scope. Key adaptations from the spec's schema, decided when this landed
+// (see README "Draft flow & matchmaking" for the full reasoning):
 //
-// Scoping decision: users / rosters / matches / game_results (spec section 4)
-// are deliberately NOT modeled here yet. They depend on design choices for
-// the draft flow and friend-link matchmaking (anonymous session identity,
-// room-code shape, WebSocket draft-room state) that haven't been made yet —
-// building them now would mean guessing at a schema before the feature that
-// drives its shape exists. They land with the draft UI / matchmaking step.
+// - No auth (Phase 1 spec: "anonymous sessions"): `users.session_token` is a
+//   random UUID the *client* generates and persists in localStorage, sent as
+//   an `X-Session-Token` header — not a login, not a signed cookie. A User
+//   row is upserted lazily the first time a token is seen. This is a casual
+//   friend-match MVP, not a security boundary.
+// - Friend-link matchmaking only (Phase 1 skips the random queue), so
+//   `matches` only ever needs a short `room_code`, not queue state.
+//   `games_to_play` is kept per spec's schema but Phase 1 hardcodes it to 1
+//   — best-of-N series (spec 5.6) is out of scope for now.
+// - The spec's draft flow says picks aren't streamed live and doesn't
+//   describe a shared/contested player pool — both users draft independently
+//   from the same always-available pool (they CAN both draft the same
+//   player). `rosters.slots` only needs to avoid a player filling two slots
+//   on the *same* roster, not cross-roster exclusivity.
+// - `draft_deadline` + `is_locked`/`locked_at` are Phase-1-specific additions
+//   (not in the spec's literal schema) needed to implement the draft timer
+//   and blind-reveal-on-lock behavior from spec section 4.
 
 generator client {
   provider = "prisma-client-js"
@@ -85,4 +99,90 @@ model PlayerRating {
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("player_ratings")
+}
+
+// Anonymous, session-token-identified "account" — see the file header for
+// why this isn't real auth. displayName is generated server-side at
+// creation (e.g. "Player 4821"), not user-editable in Phase 1.
+model User {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique @map("session_token")
+  displayName  String   @map("display_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  rosters Roster[]
+
+  @@map("users")
+}
+
+// One roster per user per match side (spec: `rosters.slots` is a JSONB
+// { position: player_id } map). NBA-only in Phase 1, so `mode` (NFL's
+// offense-only/offense+defense choice) is always null here.
+model Roster {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sport         Sport     @default(nba)
+  mode          String?
+  // { "PG": playerId, "SG": playerId, ... } — partial while drafting,
+  // must have all six NBA slots filled to lock (auto-fill guarantees this
+  // on timer expiry; a manual lock requires the drafter to have filled it
+  // themselves).
+  slots         Json      @default("{}")
+  isLocked      Boolean   @default(false) @map("is_locked")
+  lockedAt      DateTime? @map("locked_at")
+  draftDeadline DateTime  @map("draft_deadline")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  matchAsA Match? @relation("MatchRosterA")
+  matchAsB Match? @relation("MatchRosterB")
+
+  @@map("rosters")
+}
+
+// A friend-link match. `roomCode` is the entire matchmaking mechanism for
+// Phase 1 (no random queue). `status` matches spec's three values exactly —
+// whether side B has joined yet is inferred from `rosterBId` being null,
+// not a separate status value.
+model Match {
+  id                String   @id @default(uuid())
+  sport             Sport    @default(nba)
+  roomCode          String   @unique @map("room_code")
+  rosterAId         String?  @unique @map("roster_a_id")
+  rosterA           Roster?  @relation("MatchRosterA", fields: [rosterAId], references: [id])
+  rosterBId         String?  @unique @map("roster_b_id")
+  rosterB           Roster?  @relation("MatchRosterB", fields: [rosterBId], references: [id])
+  // Kept per spec's schema; Phase 1 always uses 1 (best-of-N is out of scope
+  // for now — spec section 5.6).
+  gamesToPlay       Int      @default(1) @map("games_to_play")
+  draftTimerSeconds Int      @default(300) @map("draft_timer_seconds")
+  status            String   @default("drafting") // 'drafting' | 'simulating' | 'complete'
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  gameResults GameResult[]
+
+  @@map("matches")
+}
+
+// One row per simulated game (Phase 1: always exactly one per match, since
+// games_to_play is hardcoded to 1). recapHeadline/recapArticle are nullable
+// — populated only once ANTHROPIC_API_KEY is configured and recap
+// generation actually runs; see apps/api/src/recap/.
+model GameResult {
+  id              String   @id @default(uuid())
+  matchId         String   @map("match_id")
+  match           Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  gameNumber      Int      @default(1) @map("game_number")
+  scoreA          Int      @map("score_a")
+  scoreB          Int      @map("score_b")
+  boxScore        Json     @map("box_score")
+  playLog         Json     @map("play_log")
+  highlights      Json
+  mvp             Json
+  overtimePeriods Int      @default(0) @map("overtime_periods")
+  recapHeadline   String?  @map("recap_headline")
+  recapArticle    String?  @map("recap_article")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("game_results")
 }

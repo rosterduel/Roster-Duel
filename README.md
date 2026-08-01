@@ -10,18 +10,35 @@ matchmaking only, basic box score + top-5 highlights, web only, no auth.
 ```
 apps/
   web/                 Next.js + TypeScript + Tailwind frontend
+    lib/                 API client, client-generated session token, NBA
+                          position/stat display config (spec section 8)
+    components/          DraftBoard, PlayerCard, GameCastPlayback,
+                          BoxScoreTable, HighlightsList, NewspaperRecap
+    app/
+      page.tsx             Home — create or join a friend match
+      match/[roomCode]/    Draft room + results screen (one page, state
+                            machine driven by match status)
   api/                 NestJS + TypeScript backend, Prisma ORM (Postgres)
     prisma/
-      schema.prisma      Data model — players/player_stats/player_ratings
-                          (spec section 3 only; see "Data model scope" below)
+      schema.prisma      Full data model — players/player_stats/
+                          player_ratings (spec section 3) plus users/
+                          rosters/matches/game_results (spec section 4,
+                          adapted for Phase 1 — see "Draft flow &
+                          matchmaking" below)
       seedData/
         nbaPlayers.ts     36 hand-curated real NBA players (6/position)
       seed.ts             Seed script (npx prisma db seed)
     scripts/
       verifySimEndToEnd.ts  Standalone script proving DB -> sim-engine works
+      tryRecap.ts            Manual live test for recap generation
     src/
       ratings/            Offline rating computation (base/offense/defense)
       sim/                Adapter: Prisma player rows -> sim-engine TeamInput
+      recap/               LLM-generated post-game recap (spec section 4b)
+      session/             Anonymous session guard (spec: "no auth")
+      players/             GET /players — draft-screen player pool
+      matches/              Match/roster lifecycle, draft timer + auto-fill,
+                             WebSocket gateway for live draft-room updates
 packages/
   sim-engine/          Pure TypeScript simulation engine — standalone,
                        unit-tested, no dependency on web/api
@@ -29,11 +46,12 @@ packages/
 docker-compose.yml     Local Postgres + Redis
 ```
 
-Current status: scaffold, sim engine (with real overtime periods, GameCast
-animation data, and a Game MVP formula — see below), the players/
-player_stats/player_ratings data model + seed script, and a post-game
-recap generation service are built and tested. Draft UI, matchmaking, and
-the users/rosters/matches/game_results tables land next.
+Current status: **the full Phase 1 loop works end-to-end** — sim engine
+(with real overtime periods, GameCast animation data, and a Game MVP
+formula), the full data model (players/ratings + users/rosters/matches/
+game_results), a post-game recap generation service, and the draft UI /
+friend-link matchmaking / results screen are all built and tested. See
+"Draft flow & matchmaking" below for what's in Phase 1 scope vs. deferred.
 
 ### Highlight animation data (spec section 4a)
 
@@ -99,8 +117,8 @@ and look at the `GAME MVP` line to see it end-to-end.
 ## Post-game recap ("newspaper" feature, spec section 4b)
 
 `apps/api/src/recap/` generates the headline + written recap article shown
-under the folded newspaper UI element (not yet built — this is the backend
-piece). Two design decisions here were made by the user, not chosen by me:
+under the folded newspaper UI element (`apps/web/components/NewspaperRecap.tsx`).
+Two design decisions here were made by the user, not chosen by me:
 
 - **LLM-generated, not templated** — recap writing is a well-scoped
   structured-writing task, so a cost-efficient model is used rather than a
@@ -210,6 +228,14 @@ was already weighed against.
 
    Safe to re-run — upserts by `(sport, name)`, won't duplicate players.
 
+6. (Optional) copy the web app's env file — the default already points at
+   `http://localhost:4000`, so this is only needed if you're running the
+   API somewhere else:
+
+   ```bash
+   cp apps/web/.env.local.example apps/web/.env.local
+   ```
+
 ## Running things
 
 - **API** (NestJS, http://localhost:4000, health check at `/health`):
@@ -252,16 +278,78 @@ was already weighed against.
   npm run verify:sim -w apps/api -- 42
   ```
 
-## Data model scope
+- **Playing a full match locally**: with both `dev:api` and `dev:web`
+  running (and the DB migrated + seeded), open http://localhost:3000,
+  click "Create match" to get a room link, then open that link in a
+  second browser window (or a private/incognito window — since the
+  session token lives in `localStorage`, two windows of the *same*
+  non-private profile would share a session and both act as the same
+  player). Draft both sides and lock them to see the sim run and the
+  results screen render. This exact flow (two isolated browser contexts,
+  full draft → lock → simulate → results) was verified with Playwright
+  during development — see the "Draft flow & matchmaking" section above
+  for how blind draft and async timing are enforced server-side.
 
-`apps/api/prisma/schema.prisma` currently models **only spec section 3**
-(`players` / `player_stats` / `player_ratings`). Section 4's tables
-(`users` / `rosters` / `matches` / `game_results`) are deliberately not
-built yet — they depend on draft-flow and friend-link-matchmaking design
-choices (anonymous session identity, room-code shape, WebSocket draft-room
-state) that haven't been made. Building them now would mean guessing at a
-schema before the feature that drives its shape exists; they land with the
-draft UI / matchmaking step.
+## Draft flow & matchmaking (spec section 4)
+
+`apps/api/prisma/schema.prisma` now models the full data model — spec
+section 3 (`players`/`player_stats`/`player_ratings`) plus section 4
+(`users`/`rosters`/`matches`/`game_results`), adapted for Phase 1 scope.
+Full reasoning is in the schema file's header comment; summary:
+
+- **No auth ("anonymous sessions")**: the browser generates its own random
+  UUID (`crypto.randomUUID()`, `apps/web/lib/session.ts`), persists it in
+  `localStorage`, and sends it as `X-Session-Token` on every API call.
+  `SessionGuard` (`apps/api/src/session/session.guard.ts`) lazily upserts a
+  `User` row the first time a token is seen — there's no signup step. This
+  is **not a security boundary**: anyone who learns another session's token
+  can act as that session. Fine for a casual friend-match MVP; would need
+  real auth before any real launch. It also sidesteps cross-origin cookie
+  friction between the web app (`:3000`) and API (`:4000`) in local dev.
+- **Friend-link matchmaking only**: creating a match generates a short,
+  shareable `roomCode` (`apps/api/src/matches/roomCode.ts` — 6 characters,
+  excludes visually-ambiguous letters/digits) immediately; a second
+  visitor joining that link claims the other roster slot. No random-queue
+  matchmaking in Phase 1 (per the build phase list), so `matches` doesn't
+  need queue state.
+- **Shared, uncontested player pool**: the spec's draft flow says picks
+  aren't streamed live but never describes a shared pool where a pick
+  removes that player for the opponent. Both drafters can independently
+  draft the same real player — the skill is in roster construction, not
+  who clicks faster. `autoFillRosterSlots` (`draftAutoFill.ts`) only avoids
+  a player filling two slots on the *same* roster.
+- **Blind draft, enforced server-side**: `GET /matches/:roomCode` only
+  ever returns *your own* roster's slots; the opponent's `slots` are
+  withheld until **both** rosters are locked, at which point the "blind"
+  period is over and both are revealed together — matching spec section 9
+  ("server only receives the final locked roster").
+- **Draft timer, no background worker**: each roster gets a
+  `draftDeadline` at creation/join time. Rather than run a cron job or
+  queue worker to enforce it, expiry is checked *lazily* — on every
+  `GET /matches/:roomCode` (and on save/lock attempts), any roster past its
+  deadline is auto-locked right then using `autoFillRosterSlots` (highest
+  `base_rating` available player per empty position). This means an
+  expired-but-unvisited match won't resolve until someone (either player)
+  loads the room again — an acceptable tradeoff for Phase 1 MVP scope
+  instead of standing up a scheduler.
+- **Real-time updates are a nice-to-have, not the source of truth**: spec
+  section 4 explicitly allows drafting asynchronously ("not required to be
+  online simultaneously"). `MatchesGateway` (Socket.IO) pushes
+  `opponent:locked` / `match:complete` / `recap:ready` events to instant
+  refresh a client that's currently online, but the web app also polls
+  `GET /matches/:roomCode` every few seconds as the reliable fallback for
+  a client that reconnects later having missed the event entirely.
+- **Single game only**: `matches.games_to_play` is kept in the schema (per
+  spec) but hardcoded to `1` — best-of-N series (spec 5.6) is out of scope
+  for Phase 1.
+- **Recap generation is wired into the match lifecycle**: once both
+  rosters lock and the sim runs, if `ANTHROPIC_API_KEY` is configured the
+  recap generates automatically (fire-and-forget — a slow/failed recap
+  never blocks the game result itself from being ready). If no key is
+  configured, the game result is still fully usable; the newspaper UI
+  shows a manual "Generate recap" button that hits
+  `POST /matches/:roomCode/recap` instead, so recap generation can be
+  tested live at any point after a key is added without re-simulating.
 
 ## Player data sourcing
 
