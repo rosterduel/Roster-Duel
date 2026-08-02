@@ -1,5 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, StatEstimateReason } from '@prisma/client';
 import { computeRatings, RawPlayerStats } from '../src/ratings/computeRatings';
+import { estimatePreThreePointStats } from '../src/ratings/estimatePreThreePointStats';
 import { NBA_SEED_TEAMS } from './seedData/teams';
 import { NBA_SEED_STINTS, SeedPlayerStint } from './seedData/nbaStints';
 
@@ -7,9 +8,52 @@ const prisma = new PrismaClient();
 
 const CLUTCH_MODIFIER_DEFAULT = 1.0;
 
-function statRows(stintId: string, stats: SeedPlayerStint['stats']) {
+// Steals/blocks/turnovers weren't official NBA stats before the 1973-74
+// season; there was no 3-point line at all before 1979-80. Both cutoffs
+// are spec section 10 facts, not tunable knobs — see nbaStints.ts's header
+// comment for which stat keys each one flags and why they get DIFFERENT
+// estimateReason values (a real-but-unrecorded number vs. a hypothetical
+// "what if").
+const PRE_TRACKING_DEFENSE_CUTOFF_YEAR = 1974;
+const PRE_THREE_POINT_LINE_CUTOFF_YEAR = 1980;
+const DEFENSE_ESTIMATE_KEYS = new Set(['spg', 'bpg', 'tov_pg', 'stl_rate', 'blk_rate']);
+const THREE_POINT_ESTIMATE_KEYS = new Set(['three_pt_pct', 'three_pt_rate']);
+
+function needsThreePointEstimate(seedStint: SeedPlayerStint): boolean {
+  return seedStint.stintEndYear < PRE_THREE_POINT_LINE_CUTOFF_YEAR;
+}
+
+/**
+ * Single source of truth for a stint's "effective" three-point numbers —
+ * the real seeded value for any post-1980 stint, or the computed
+ * estimatePreThreePointStats() output for a pre-1980 one. Used both when
+ * writing player_stint_stats rows and when building rating computation
+ * inputs, so a pre-1980 stint's estimated 3PT signal consistently feeds
+ * base_rating/offense_rating too, not just the displayed stat line.
+ */
+function effectiveThreePointStats(seedStint: SeedPlayerStint): { threePtPct: number; threePtRate: number } {
+  if (!needsThreePointEstimate(seedStint)) {
+    return { threePtPct: seedStint.stats.threePtPct, threePtRate: seedStint.stats.threePtRate };
+  }
+  if (!seedStint.shooterReputation) {
+    throw new Error(`Stint "${seedStint.name}" (${seedStint.team}/${seedStint.era}) predates the 3-point line but has no shooterReputation set.`);
+  }
+  return estimatePreThreePointStats({
+    position: seedStint.position,
+    ftPct: seedStint.stats.ftPct,
+    fgPct: seedStint.stats.fgPct,
+    shooterReputation: seedStint.shooterReputation,
+  });
+}
+
+function statRows(stintId: string, seedStint: SeedPlayerStint) {
   const scope = 'stint';
-  return [
+  const stats = seedStint.stats;
+  const needsDefenseEstimate = seedStint.stintEndYear <= PRE_TRACKING_DEFENSE_CUTOFF_YEAR;
+  const needsThreePoint = needsThreePointEstimate(seedStint);
+  const { threePtPct, threePtRate } = effectiveThreePointStats(seedStint);
+
+  const rows = [
     { statKey: 'ppg', statValue: stats.ppg },
     { statKey: 'rpg', statValue: stats.rpg },
     { statKey: 'apg', statValue: stats.apg },
@@ -17,14 +61,21 @@ function statRows(stintId: string, stats: SeedPlayerStint['stats']) {
     { statKey: 'bpg', statValue: stats.bpg },
     { statKey: 'tov_pg', statValue: stats.tovPg },
     { statKey: 'fg_pct', statValue: stats.fgPct },
-    { statKey: 'three_pt_pct', statValue: stats.threePtPct },
-    { statKey: 'three_pt_rate', statValue: stats.threePtRate },
+    { statKey: 'three_pt_pct', statValue: threePtPct },
+    { statKey: 'three_pt_rate', statValue: threePtRate },
     { statKey: 'ft_pct', statValue: stats.ftPct },
     { statKey: 'ast_rate', statValue: stats.astRate },
     { statKey: 'reb_rate', statValue: stats.rebRate },
     { statKey: 'stl_rate', statValue: stats.stlRate },
     { statKey: 'blk_rate', statValue: stats.blkRate },
-  ].map((row) => ({ stintId, scope, ...row }));
+  ];
+
+  return rows.map((row) => {
+    let estimateReason: StatEstimateReason | null = null;
+    if (needsDefenseEstimate && DEFENSE_ESTIMATE_KEYS.has(row.statKey)) estimateReason = 'pre_tracking_era';
+    if (needsThreePoint && THREE_POINT_ESTIMATE_KEYS.has(row.statKey)) estimateReason = 'hypothetical_pre_three_point';
+    return { stintId, scope, estimateReason, ...row };
+  });
 }
 
 async function main() {
@@ -75,10 +126,10 @@ async function main() {
     });
     stintIdByNaturalKey.set(`${seedStint.team}|${seedStint.era}|${seedStint.name}`, stint.id);
 
-    for (const row of statRows(stint.id, seedStint.stats)) {
+    for (const row of statRows(stint.id, seedStint)) {
       await prisma.playerStintStat.upsert({
         where: { stintId_statKey_scope: { stintId: row.stintId, statKey: row.statKey, scope: row.scope } },
-        update: { statValue: row.statValue },
+        update: { statValue: row.statValue, estimateReason: row.estimateReason },
         create: row,
       });
     }
@@ -98,7 +149,10 @@ async function main() {
     spg: seedStint.stats.spg,
     bpg: seedStint.stats.bpg,
     fgPct: seedStint.stats.fgPct,
-    threePtPct: seedStint.stats.threePtPct,
+    // Uses the same effective (real-or-estimated) 3PT% as the stored stat
+    // row — a pre-1980 stint's estimate should feed offense_rating too, not
+    // just the displayed value, or the two would silently disagree.
+    threePtPct: effectiveThreePointStats(seedStint).threePtPct,
     astRate: seedStint.stats.astRate,
     rebRate: seedStint.stats.rebRate,
     stlRate: seedStint.stats.stlRate,

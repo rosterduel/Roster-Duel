@@ -65,6 +65,23 @@ enum Era {
   twenty_twenties
 }
 
+// Why a given player_stint_stats row is an estimate rather than a sourced
+// figure (spec section 10 "Estimating stats from pre-tracking eras") —
+// deliberately two distinct reasons, not one boolean, because the UI must
+// show different tooltip copy for each (see PlayerStintStat doc comment):
+// - pre_tracking_era: the stat is a real, historical quantity that simply
+//   wasn't officially recorded yet (steals/blocks/turnovers before the
+//   1973-74 season) — a recovery estimate for a number that truly existed.
+// - hypothetical_pre_three_point: a genuinely counterfactual "what if" —
+//   3-point shooting stats for a stint before the line existed at all
+//   (pre-1979-80), estimated from FT%/position-adjusted FG%/reputation
+//   signals (see estimatePreThreePointStats.ts) purely to give draft-time
+//   signal, not a recovery of a real number.
+enum StatEstimateReason {
+  pre_tracking_era
+  hypothetical_pre_three_point
+}
+
 // Sprite personalization for the GameCast animation (spec 4a) is skin tone
 // only — no facial detail, no jersey/team accuracy. A small fixed palette
 // (not a hex color) keeps the sprite art bounded to a few pre-drawn
@@ -150,13 +167,21 @@ model PlayerStint {
 // 'blk_rate'. scope is 'stint' for every Phase 1 row (the original
 // 'career'/'peak_3yr'/'last_season' distinction doesn't apply once every
 // row already IS a bounded stint).
+//
+// estimateReason is null for the vast majority of rows (real, sourced
+// figures) and set only for the handful of pre-1974/pre-1980 rows where
+// the underlying stat had to be estimated (see StatEstimateReason and
+// nbaStints.ts's header comment) — this is what lets the API tell the
+// frontend which values need the spec 10 asterisk/tooltip treatment,
+// without the frontend having to know anything about NBA history itself.
 model PlayerStintStat {
-  id        String      @id @default(uuid())
-  stintId   String      @map("stint_id")
-  stint     PlayerStint @relation(fields: [stintId], references: [id], onDelete: Cascade)
-  statKey   String      @map("stat_key")
-  statValue Decimal     @map("stat_value") @db.Decimal(8, 4)
-  scope     String
+  id             String              @id @default(uuid())
+  stintId        String              @map("stint_id")
+  stint          PlayerStint         @relation(fields: [stintId], references: [id], onDelete: Cascade)
+  statKey        String              @map("stat_key")
+  statValue      Decimal             @map("stat_value") @db.Decimal(8, 4)
+  scope          String
+  estimateReason StatEstimateReason? @map("estimate_reason")
 
   @@unique([stintId, statKey, scope])
   @@map("player_stint_stats")

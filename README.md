@@ -349,13 +349,43 @@ piecemeal) around it:
   `stintId` instead of `playerId`. `computeRatings.ts` needed **zero
   changes** — it only ever cared about a generic string ID, not what
   entity it represents.
-- **Historical accuracy caveats** (documented in `nbaStints.ts`'s header
-  comment): there was no 3-point line before the 1979-80 season, so
-  `threePtRate`/`threePtPct` are `0` for every pre-1980 stint; steals,
-  blocks, and turnovers weren't official NBA stats before 1973-74, so the
-  two pre-1974 combos (Boston/sixties, New York/seventies) use
-  reasonable illustrative estimates for those specific stats rather than
-  sourced figures — called out explicitly rather than presented as real.
+- **Estimated stats from pre-tracking eras** (spec section 10) — steals,
+  blocks, and turnovers weren't official NBA stats before the 1973-74
+  season, and there was no 3-point line at all before 1979-80. Rather than
+  omit those fields or leave a true zero, the 12 affected stints (all in
+  the two combos that predate both cutoffs — Boston/sixties, New
+  York/seventies) carry **estimated** values, and every affected
+  `player_stint_stats` row is tagged with a `StatEstimateReason` so the
+  frontend knows which values to asterisk and with which tooltip copy
+  (spec section 10's UI requirement — see `PlayerCard.tsx`):
+  - **`pre_tracking_era`** (spg/bpg/tov_pg/stl_rate/blk_rate) — these are
+    real historical quantities that just weren't recorded yet, estimated
+    from signals that DO exist for the era (All-Defensive Team voting,
+    started 1968-69; contemporary defensive reputation; position-typical
+    involvement otherwise). Tooltip: *"Estimated average —
+    pre-stat-tracking era."*
+  - **`hypothetical_pre_three_point`** (three_pt_pct/three_pt_rate) — a
+    genuinely counterfactual "how would this player likely have shot from
+    three," computed by `estimatePreThreePointStats()`
+    (`apps/api/src/ratings/estimatePreThreePointStats.ts`, unit-tested) as
+    a weighted blend of FT% (primary signal — available every era,
+    isolates shooting touch from shot selection), position-adjusted FG%
+    (secondary — raw FG% alone overrates rim-running bigs), and a
+    hand-authored `shooterReputation` tag per player (qualitative nudge,
+    same category of signal as the defensive-stat estimates, applied to
+    shooting instead). Calibrated against early-1980s league 3PT
+    shooting as the closest real comparable. Explicitly does NOT use
+    shot-location data (not sourceable pre-1980) or NBA 2K ratings
+    (proprietary editorial judgment, off-limits per spec section 10
+    alongside DVOA/PFF). Tooltip: *"Hypothetical estimate — no 3-point
+    line existed in this era"* — deliberately different wording from the
+    defensive-stat tooltip, since this is a "what if," not a recovery of
+    a real number.
+
+  The estimator is the single source of truth for the 3PT numbers —
+  `seed.ts` calls it at seed time rather than a hand-typed value living in
+  `nbaStints.ts`, so the stored stat and the value that feeds
+  `offense_rating` can't silently drift apart.
 
 **What's still interim:** `GET /players` (`players.service.ts`) still
 returns every stint at a position across all teams/eras undifferentiated

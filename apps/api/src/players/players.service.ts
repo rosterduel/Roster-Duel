@@ -26,6 +26,15 @@ export interface PlayerSummaryDto {
    * keys to show first per position, but nothing is filtered out here.
    */
   stats: Record<string, number>;
+  /**
+   * Which of the above `stats` keys are estimates rather than sourced
+   * figures, and why (spec section 10's "Estimating stats from
+   * pre-tracking eras" — see schema.prisma's StatEstimateReason doc
+   * comment). Absent keys are real, sourced numbers. The frontend maps the
+   * reason to the required asterisk + tooltip copy — this service doesn't
+   * pick display text, same separation as `stats` itself.
+   */
+  estimatedStats: Record<string, 'pre_tracking_era' | 'hypothetical_pre_three_point'>;
 }
 
 /**
@@ -68,6 +77,9 @@ export class PlayersService {
         defenseRating: Number(s.rating!.defenseRating),
         clutchModifier: Number(s.rating!.clutchModifier),
         stats: Object.fromEntries(s.stats.map((stat) => [stat.statKey, Number(stat.statValue)])),
+        estimatedStats: Object.fromEntries(
+          s.stats.filter((stat) => stat.estimateReason !== null).map((stat) => [stat.statKey, stat.estimateReason as 'pre_tracking_era' | 'hypothetical_pre_three_point']),
+        ),
       }));
   }
 }

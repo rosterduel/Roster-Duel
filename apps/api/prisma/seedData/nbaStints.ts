@@ -30,26 +30,60 @@
  *
  * Accuracy caveat: illustrative, approximate per-stint averages compiled
  * from general public knowledge, not verified line-by-line against a
- * canonical source — treat as MVP placeholder data, same as before. Two
- * additional caveats specific to this pool:
- * - Steals, blocks, and turnovers were not official NBA statistics before
- *   the 1973-74 season. For the two combos that predate that (Boston/
- *   sixties, New York/seventies), those four rate/counting stats are
- *   reasonable illustrative estimates, not sourced figures.
- * - "Stint years" approximate each player's actual tenure with that
- *   specific team within the named decade, not the full decade uniformly
- *   — a bench piece who joined a dynasty three years in has stint years
- *   reflecting that, not the whole era bucket.
+ * canonical source — treat as MVP placeholder data, same as before.
+ *
+ * "Stint years" approximate each player's actual tenure with that specific
+ * team within the named decade, not the full decade uniformly — a bench
+ * piece who joined a dynasty three years in has stint years reflecting
+ * that, not the whole era bucket.
  *
  * Rate stats (astRate/rebRate/stlRate/blkRate/threePtRate) do double duty
  * exactly as before: they feed both offline rating computation
  * (computeRatings.ts) and, unchanged, the sim-engine's per-trip
  * attribution weights.
+ *
+ * Estimated stats (spec section 10, "Estimating stats from pre-tracking
+ * eras") — exactly the 12 stints below in the two combos that predate the
+ * 1973-74 season (Boston/sixties, New York/seventies) carry estimates
+ * rather than sourced figures, for two DIFFERENT reasons that seed.ts
+ * flags with a distinct `estimateReason` on the affected player_stint_stats
+ * rows (so the frontend can show a distinct tooltip per spec 10 for each):
+ *
+ * - `pre_tracking_era` (spg/bpg/tovPg/stlRate/blkRate): steals, blocks, and
+ *   turnovers weren't official NBA statistics before the 1973-74 season —
+ *   these ARE real historical quantities, just unrecorded. The numbers
+ *   below are reasonable recovery estimates built from signals that DO
+ *   exist for this era: All-Defensive Team voting (started 1968-69, well
+ *   before steals/blocks were tracked) and reputation for the era's
+ *   well-known defensive standouts (Russell, Frazier, DeBusschere,
+ *   Havlicek all carry contemporary reputations as elite defenders and are
+ *   estimated above the era's average accordingly); position-typical
+ *   involvement for everyone else, landing near a league-average rate for
+ *   their role rather than either extreme.
+ * - `hypothetical_pre_three_point` (threePtPct/threePtRate): there was no
+ *   3-point line at all before the 1979-80 season, so this is a genuinely
+ *   hypothetical "how would this player likely have shot from three,"
+ *   computed by `estimatePreThreePointStats()`
+ *   (apps/api/src/ratings/estimatePreThreePointStats.ts) from FT% (primary
+ *   signal), position-adjusted FG% (secondary signal), and each player's
+ *   `shooterReputation` below (qualitative nudge — hand-assigned per
+ *   spec 10's third signal, e.g. Sam Jones/Walt Frazier/Bill Bradley
+ *   carried contemporary reputations as sharp outside shooters and are
+ *   tagged 'high'; Bill Russell famously had no outside shot at all and is
+ *   tagged 'low'). The `threePtPct`/`threePtRate` literals below are left
+ *   at their old placeholder `0` for these 12 stints — seed.ts overrides
+ *   them with the computed estimate at seed time (see PRE_THREE_POINT_LINE_
+ *   CUTOFF_YEAR there), so the estimator function is the actual source of
+ *   truth, not a hand-copied number that could drift out of sync with it.
+ *   Explicitly NOT sourced from shot-location data (doesn't exist pre-1980)
+ *   or NBA 2K ratings (proprietary editorial judgment, off-limits per spec
+ *   section 10) — see the estimator's own doc comment.
  */
 
 export type NbaPosition = 'PG' | 'SG' | 'SF' | 'PF' | 'C' | '6MAN';
 export type Era = 'sixties' | 'seventies' | 'eighties' | 'nineties' | 'two_thousands' | 'twenty_tens' | 'twenty_twenties';
 export type SkinTone = 'light' | 'medium' | 'dark';
+export type ShooterReputation = 'low' | 'average' | 'high';
 
 export interface SeedStintStats {
   ppg: number;
@@ -83,6 +117,14 @@ export interface SeedPlayerStint {
   stats: SeedStintStats;
   /** Goes directly to player_stint_ratings.usage_rate — hand-authored like the rest, not computed. */
   usageRate: number;
+  /**
+   * Only meaningful (and required by seed.ts) for stints before the 1979-80
+   * introduction of the 3-point line — the qualitative "scoring role /
+   * reputation" nudge in estimatePreThreePointStats()'s methodology (spec
+   * section 10, signal 3). Omitted for every post-1980 stint, where real
+   * 3PT numbers exist and no estimate is computed.
+   */
+  shooterReputation?: ShooterReputation;
 }
 
 export const NBA_SEED_STINTS: SeedPlayerStint[] = [
@@ -92,36 +134,42 @@ export const NBA_SEED_STINTS: SeedPlayerStint[] = [
     stintStartYear: 1957, stintEndYear: 1963, skinTone: 'light',
     stats: { ppg: 18.5, rpg: 4.9, apg: 8.9, spg: 1.6, bpg: 0.2, tovPg: 3.8, fgPct: 0.373, threePtPct: 0, threePtRate: 0, ftPct: 0.803, astRate: 0.36, rebRate: 0.10, stlRate: 0.020, blkRate: 0.004 },
     usageRate: 0.25,
+    shooterReputation: 'average', // slick passer/ball-handler by reputation, not specifically known for outside shooting
   },
   {
     personKey: 'sam_jones', name: 'Sam Jones', position: 'SG', team: 'Boston', era: 'sixties',
     stintStartYear: 1957, stintEndYear: 1969, skinTone: 'dark',
     stats: { ppg: 18.9, rpg: 4.9, apg: 2.5, spg: 1.2, bpg: 0.3, tovPg: 2.8, fgPct: 0.458, threePtPct: 0, threePtRate: 0, ftPct: 0.800, astRate: 0.12, rebRate: 0.10, stlRate: 0.015, blkRate: 0.006 },
     usageRate: 0.23,
+    shooterReputation: 'high', // widely cited as one of the best pure/clutch shooters of his era ("Mr. Clutch")
   },
   {
     personKey: 'john_havlicek', name: 'John Havlicek', position: 'SF', team: 'Boston', era: 'sixties',
     stintStartYear: 1962, stintEndYear: 1969, skinTone: 'light',
     stats: { ppg: 20.1, rpg: 6.3, apg: 4.1, spg: 1.5, bpg: 0.4, tovPg: 2.9, fgPct: 0.439, threePtPct: 0, threePtRate: 0, ftPct: 0.806, astRate: 0.18, rebRate: 0.12, stlRate: 0.018, blkRate: 0.008 },
     usageRate: 0.24,
+    shooterReputation: 'average', // versatile, high-volume all-around scorer, not specifically a deep-range specialist
   },
   {
     personKey: 'tom_heinsohn', name: 'Tom Heinsohn', position: 'PF', team: 'Boston', era: 'sixties',
     stintStartYear: 1957, stintEndYear: 1965, skinTone: 'light',
     stats: { ppg: 18.6, rpg: 8.8, apg: 2.0, spg: 1.0, bpg: 0.5, tovPg: 3.0, fgPct: 0.404, threePtPct: 0, threePtRate: 0, ftPct: 0.766, astRate: 0.10, rebRate: 0.17, stlRate: 0.014, blkRate: 0.012 },
     usageRate: 0.23,
+    shooterReputation: 'average', // solid role-player scorer, no strong outside-shooting reputation either way
   },
   {
     personKey: 'bill_russell', name: 'Bill Russell', position: 'C', team: 'Boston', era: 'sixties',
     stintStartYear: 1957, stintEndYear: 1969, skinTone: 'dark',
     stats: { ppg: 15.1, rpg: 22.5, apg: 4.3, spg: 1.5, bpg: 2.5, tovPg: 3.2, fgPct: 0.440, threePtPct: 0, threePtRate: 0, ftPct: 0.561, astRate: 0.17, rebRate: 0.28, stlRate: 0.015, blkRate: 0.055 },
     usageRate: 0.20,
+    shooterReputation: 'low', // famously poor free-throw shooter with essentially no outside game — a pure rim/defensive center
   },
   {
     personKey: 'frank_ramsey', name: 'Frank Ramsey', position: '6MAN', team: 'Boston', era: 'sixties',
     stintStartYear: 1957, stintEndYear: 1964, skinTone: 'light',
     stats: { ppg: 13.4, rpg: 5.5, apg: 1.9, spg: 0.8, bpg: 0.3, tovPg: 2.2, fgPct: 0.422, threePtPct: 0, threePtRate: 0, ftPct: 0.800, astRate: 0.11, rebRate: 0.12, stlRate: 0.012, blkRate: 0.008 },
     usageRate: 0.19,
+    shooterReputation: 'average', // reliable early "sixth man" bench scorer, no particular deep-shooting reputation
   },
 
   // ==================== New York, 1970s (Knicks champions) ====================
@@ -130,36 +178,42 @@ export const NBA_SEED_STINTS: SeedPlayerStint[] = [
     stintStartYear: 1970, stintEndYear: 1974, skinTone: 'dark',
     stats: { ppg: 20.7, rpg: 6.4, apg: 6.2, spg: 1.9, bpg: 0.3, tovPg: 3.0, fgPct: 0.506, threePtPct: 0, threePtRate: 0, ftPct: 0.786, astRate: 0.28, rebRate: 0.12, stlRate: 0.022, blkRate: 0.006 },
     usageRate: 0.24,
+    shooterReputation: 'high', // stylish, smooth-shooting guard reputation ("Clyde") on top of elite defensive reputation
   },
   {
     personKey: 'dick_barnett', name: 'Dick Barnett', position: 'SG', team: 'New York', era: 'seventies',
     stintStartYear: 1970, stintEndYear: 1973, skinTone: 'dark',
     stats: { ppg: 13.3, rpg: 2.7, apg: 2.5, spg: 1.0, bpg: 0.2, tovPg: 2.0, fgPct: 0.461, threePtPct: 0, threePtRate: 0, ftPct: 0.789, astRate: 0.13, rebRate: 0.07, stlRate: 0.015, blkRate: 0.004 },
     usageRate: 0.18,
+    shooterReputation: 'average', // known for an unorthodox effective jumper, but mostly a close/mid-range shot, not deep range
   },
   {
     personKey: 'bill_bradley', name: 'Bill Bradley', position: 'SF', team: 'New York', era: 'seventies',
     stintStartYear: 1970, stintEndYear: 1974, skinTone: 'light',
     stats: { ppg: 12.4, rpg: 3.6, apg: 3.4, spg: 1.0, bpg: 0.2, tovPg: 2.1, fgPct: 0.471, threePtPct: 0, threePtRate: 0, ftPct: 0.827, astRate: 0.16, rebRate: 0.08, stlRate: 0.015, blkRate: 0.004 },
     usageRate: 0.16,
+    shooterReputation: 'high', // widely cited as an excellent long-range set shooter dating back to his Princeton days
   },
   {
     personKey: 'dave_debusschere', name: 'Dave DeBusschere', position: 'PF', team: 'New York', era: 'seventies',
     stintStartYear: 1970, stintEndYear: 1974, skinTone: 'light',
     stats: { ppg: 16.7, rpg: 11.0, apg: 2.6, spg: 1.1, bpg: 0.5, tovPg: 2.4, fgPct: 0.448, threePtPct: 0, threePtRate: 0, ftPct: 0.747, astRate: 0.12, rebRate: 0.20, stlRate: 0.016, blkRate: 0.010 },
     usageRate: 0.21,
+    shooterReputation: 'average', // a reliable mid-range jumper for a power forward of his era, not a specialist reputation
   },
   {
     personKey: 'willis_reed', name: 'Willis Reed', position: 'C', team: 'New York', era: 'seventies',
     stintStartYear: 1970, stintEndYear: 1973, skinTone: 'dark',
     stats: { ppg: 17.9, rpg: 12.6, apg: 2.1, spg: 0.9, bpg: 1.0, tovPg: 2.6, fgPct: 0.476, threePtPct: 0, threePtRate: 0, ftPct: 0.747, astRate: 0.10, rebRate: 0.22, stlRate: 0.013, blkRate: 0.022 },
     usageRate: 0.22,
+    shooterReputation: 'average', // a good face-up jumper for a center of his era, but not a "sharpshooter" reputation
   },
   {
     personKey: 'earl_monroe', name: 'Earl Monroe', position: '6MAN', team: 'New York', era: 'seventies',
     stintStartYear: 1971, stintEndYear: 1974, skinTone: 'dark',
     stats: { ppg: 15.5, rpg: 3.0, apg: 3.5, spg: 1.0, bpg: 0.2, tovPg: 2.4, fgPct: 0.449, threePtPct: 0, threePtRate: 0, ftPct: 0.797, astRate: 0.17, rebRate: 0.07, stlRate: 0.015, blkRate: 0.005 },
     usageRate: 0.20,
+    shooterReputation: 'average', // creative, flashy scoring reputation ("Earl the Pearl"), but built on shot craft, not deep range
   },
 
   // ==================== Philadelphia, 1980s (Dr. J / Moses Malone) ====================

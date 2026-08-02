@@ -25,18 +25,28 @@ export interface LeaderboardEntry {
   winPct: number;
 }
 
+export type StatEstimateReason = 'pre_tracking_era' | 'hypothetical_pre_three_point';
+
 export interface PlayerSummary {
   id: string;
   name: string;
   position: string;
-  eraStartYear: number;
-  eraEndYear: number | null;
+  personKey: string;
+  teamId: string;
+  teamName: string;
+  teamColorHex: string;
+  era: string;
+  stintStartYear: number;
+  stintEndYear: number;
   isActive: boolean;
+  skinTone: string;
   baseRating: number;
   offenseRating: number;
   defenseRating: number;
   clutchModifier: number;
   stats: Record<string, number>;
+  /** statKey -> why it's an estimate, not a sourced figure (spec section 10). Absent keys are real numbers. */
+  estimatedStats: Record<string, StatEstimateReason>;
 }
 
 export interface CreateMatchResponse {

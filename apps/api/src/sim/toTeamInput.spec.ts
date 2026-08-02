@@ -8,6 +8,7 @@ function stat(stintId: string, statKey: string, value: number): StintWithStatsAn
     statKey,
     statValue: new Prisma.Decimal(value),
     scope: 'stint',
+    estimateReason: null,
   };
 }
 

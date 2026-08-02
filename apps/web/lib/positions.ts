@@ -1,4 +1,4 @@
-import { NbaPosition } from './types';
+import { NbaPosition, StatEstimateReason } from './types';
 
 export const NBA_POSITIONS: NbaPosition[] = ['PG', 'SG', 'SF', 'PF', 'C', '6MAN'];
 
@@ -79,3 +79,14 @@ export function formatStatValue(value: number | undefined, format?: 'pct'): stri
   if (format === 'pct') return `${Math.round(value * 100)}%`;
   return String(value);
 }
+
+/**
+ * Spec section 10's UI requirement: an estimated stat gets a visible
+ * asterisk with a hover/tap tooltip, and the two estimate kinds need
+ * DIFFERENT wording (a real-but-unrecorded number vs. a hypothetical
+ * "what if") — don't collapse them into one generic tooltip.
+ */
+export const ESTIMATE_TOOLTIPS: Record<StatEstimateReason, string> = {
+  pre_tracking_era: 'Estimated average — pre-stat-tracking era',
+  hypothetical_pre_three_point: 'Hypothetical estimate — no 3-point line existed in this era',
+};
