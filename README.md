@@ -11,8 +11,11 @@ matchmaking only, basic box score + top-5 highlights, web only, no auth.
 apps/
   web/                 Next.js + TypeScript + Tailwind frontend
     lib/                 API client, client-generated session token, NBA
-                          position/stat display config (spec section 8)
-    components/          DraftBoard, PlayerCard, GameCastPlayback,
+                          position/stat display config (spec section 8),
+                          court.ts (GameCast zone positions + ball-motion
+                          math, spec 4a)
+    components/          DraftBoard, PlayerCard, GameCastPlayback (+
+                          CourtDiagram/PlayerSprite/Basketball, spec 4a),
                           BoxScoreTable, HighlightsList, NewspaperRecap
     app/
       page.tsx             Home — create/join a friend match, nav to
@@ -109,6 +112,119 @@ NBA-only for now, matching Phase 1 scope — NFL's equivalent (yard line +
 direction) isn't built since NFL itself is Phase 2. Run
 `npm run demo:sim -- <seed>` and look at the `[playType] start -> end` line
 under each highlight to see this data directly.
+
+### GameCast animated playback — real build (spec section 4a)
+
+The above data was built ahead of this step and sat unconsumed behind a
+placeholder (a plain green rectangle with two bare circles). This section
+is the real build on top of it: `GameCastPlayback.tsx` now renders a full
+retro/8-bit court with a real basketball sprite, a pose-per-play-type
+player sprite, and Web Animations API-driven ball motion — not CSS
+placeholder transitions. Direction was checked against a static mockup
+before any of this was wired up (an Artifact, reviewed and iterated with
+the user over two rounds — pose silhouettes had to be redesigned once to
+actually read as distinct at this scale, and Steal/Block had to be split
+into two poses matching the sim's own playType tags) before building the
+real system on top of it.
+
+**Two real attribution bugs surfaced and were fixed in `highlights.ts`
+while wiring this up** — both were "the highlighted player doesn't match
+what the animation is supposed to show," not cosmetic:
+
+- A **blocked shot** (`playType: 'block'`) was headlined by whoever
+  grabbed the rebound afterward, not the blocker — `describe()` never
+  looked at `blockPlayerId` at all. Fixed to attribute to the blocker,
+  with a description that names both the blocker and the shooter denied.
+- An **unblocked miss** (`playType: 'three_pointer_missed'` /
+  `'two_pointer_missed'`) was headlined by the defensive rebounder, not
+  the shooter — meaning the sprite would've shown the rebounder performing
+  a shooting motion. Fixed to attribute to the shooter (`playType` doesn't
+  change based on who rebounds it — see its doc comment — so the
+  highlighted player has to be whoever that shooting-pose animation is
+  actually about).
+
+Both are covered by new tests in `highlights.spec.ts`, and neither was
+something the frontend build could route around — they had to be fixed at
+the data layer.
+
+**`GameResultDto.playerSkinTones`** (`matches.service.ts`): a
+`playerId -> skinTone` map, assembled at read time from the two locked
+rosters' `PlayerStint` rows (no new column — `skinTone` was already
+seeded a step ahead of when it'd be needed, see "Team + era data model"
+below). `playerId` here is the same id space `boxScore`/`highlights`
+already use (a `PlayerStint` id, per `toTeamInput.ts`), so it's a direct
+lookup — the sim engine itself stays untouched, since it has never known
+what a player looks like and shouldn't need to.
+
+**Components** (`apps/web/components/`, `apps/web/lib/court.ts`):
+- `CourtDiagram.tsx` — a static, symmetric full-court SVG: both hoops,
+  both keys, both three-point arcs, half-court line/circle. A single
+  play's ball motion only ever happens on the attacking (right) half —
+  `CourtZone` positions are offense-relative, not court-absolute, so
+  there's no "which end" to track — but the court itself is drawn whole.
+- `PlayerSprite.tsx` — four full, distinct silhouettes (not shared limbs
+  on one identical core): **shoot** (asymmetric Y-arms above the head,
+  one leg kicked back), **steal** (low wide crouch, one arm swiping to
+  the side — also reused for `turnover`, approved rather than building a
+  fifth pose no play type explicitly needed), **block** (vertical jump,
+  ONE arm raised), **reach**/rebound (vertical jump, BOTH arms raised).
+  Block and Rebound share the same jump/tucked-legs base — the one-arm-
+  vs-two-arm difference is deliberately the entire visual distinction
+  between them, confirmed to read correctly at this scale before being
+  built into the real system. Skin tone is the only personalization
+  (`playerSkinTones`), no facial detail or jersey/team accuracy.
+- `Basketball.tsx` — seam lines and a contact shadow, not a plain dot.
+  Positioned via a forwarded ref's CSS `transform`, driven externally by
+  Web Animations API rather than by re-rendering `cx`/`cy` — WAAPI
+  animates CSS properties, not SVG presentation attributes.
+
+**Motion** (`lib/court.ts`, pure functions, no React):
+- Normal plays get a curved (not straight-line) path — `buildArcKeyframes()`
+  samples a quadratic Bézier bowed off the direct line between
+  `startLocation`/`endLocation`. The camera is aerial per spec (unchanged
+  from the original placeholder), so there's no real shot-height to show;
+  "arc" here means a curved 2D path, not literal height.
+- **Block gets a genuinely different path, not a reskinned arc**
+  (`computeBlockDeflection()`): the ball approaches normally for the
+  first ~55% of the distance to the hoop (the contact point — also where
+  the blocker's sprite is positioned, not at the shooter's original
+  spot), then sharply deflects off to the side and back toward mid-court,
+  weighted so the deflection reads as sudden (70%/30% split via explicit
+  keyframe `offset`s) rather than gradual. It never reaches the hoop.
+- The outcome badge (`+3`/`+2`/`MISS`/`FT`/`STL`/`BLOCK`/`REB`/`TO`) pops
+  up timed to when the ball's flight animation completes, at the ball's
+  actual final resting position (the deflection point for a block, not
+  the hoop) — reinforcing the score/text update below it, not just
+  decorating the court.
+- `prefers-reduced-motion` is respected: the ball snaps directly to its
+  final position instead of animating, and the CSS pop/fade keyframes
+  (`globals.css`) are disabled outright.
+
+**What didn't need to change**: the playback controller itself
+(`GameCastPlayback.tsx`'s chronological ordering, one-play-at-a-time
+pacing, skip-to-results button, and the transition to final score/box
+score/written highlights once the sequence ends or is skipped) — all of
+that was already correct from the earlier placeholder build. Only what
+gets rendered per highlight changed.
+
+**Verifying this**: `buildHighlights`'s leverage-ranked top-5/6 selection
+means a real simulated game's highlights are dominated by scoring plays —
+steals, blocks, and rebounds rarely swing win probability enough to make
+the cut, so a real game won't reliably exercise every pose. Verified two
+ways, not one: a real completed game's actual GameCast played through
+unmodified end to end (screen-recorded), plus a second recording of the
+same real component fed a hand-built 6-highlight set (one of each
+`playType`, using real players/skin tones from that same match, injected
+via network response interception in the test — not a separate mock
+component) to guarantee every pose and the block-deflection path all get
+exercised together in one pass. Confirmed live: all four sprite poses
+render distinctly, the block path visibly diverges from a normal
+scoring arc partway through and never reaches the hoop, the outcome
+badge times correctly to each play's resolution, skip-to-results works
+mid-sequence, and the handoff to the final score/box score/newspaper
+screen is unaffected. `npm run verify:sim -w apps/api` and the full test
+suite (84 API / 71 sim-engine, two new in `highlights.spec.ts` for the
+attribution fixes) all pass.
 
 ### Game MVP formula (spec section 4b)
 
@@ -330,8 +446,9 @@ different unit entirely, so the schema was rebuilt (not migrated forward
 piecemeal) around it:
 
 - **`Team`** — 12 hand-curated teams (`seedData/teams.ts`), each with a
-  cosmetic `colorHex` used for draft-board chips and (later) GameCast
-  jersey coloring.
+  real, recognizable primary `colorHex` used for draft-board chips (spec
+  4c). Not used by GameCast — spec 4a is explicit that the sprite needs no
+  jersey/team accuracy, only skin tone (see below).
 - **`PlayerStint`** — the draftable unit. A real player who played for
   multiple teams, or the same team across different eras, becomes
   **multiple rows** — one per team+era combination they're draftable

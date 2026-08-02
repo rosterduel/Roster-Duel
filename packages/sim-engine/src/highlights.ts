@@ -28,6 +28,7 @@ function describe(event: PossessionEvent, nameById: Map<string, string>): { desc
   const shooterName = event.shooterId ? nameById.get(event.shooterId) ?? 'A player' : undefined;
   const assisterName = event.assisterId ? nameById.get(event.assisterId) : undefined;
   const rebounderName = event.reboundPlayerId ? nameById.get(event.reboundPlayerId) : undefined;
+  const blockerName = event.blockPlayerId ? nameById.get(event.blockPlayerId) : undefined;
 
   switch (event.outcome) {
     case 'make_3':
@@ -60,11 +61,30 @@ function describe(event: PossessionEvent, nameById: Map<string, string>): { desc
       };
     }
     case 'miss_def_reb':
-      return {
-        description: `${scoreContext} ${rebounderName ?? 'the defense'} closes it out with a defensive rebound.`,
-        playerId: event.reboundPlayerId ?? '',
-        playerName: rebounderName ?? 'A player',
-      };
+      // A blocked shot headlines the BLOCKER, not whoever grabs the loose
+      // ball afterward (spec 4a: the sprite must perform the actual
+      // action described — "block" needs to attribute to the player who
+      // blocked it, not a bystander to the rebound that followed).
+      //
+      // An UNBLOCKED miss stays headlined by the SHOOTER, not the
+      // rebounder — playType stays 'three_pointer_missed'/
+      // 'two_pointer_missed' regardless of who rebounds it (see PlayType's
+      // doc comment: "who rebounds it doesn't change what animation
+      // plays"), so the highlighted player has to be whoever that
+      // shot-missed animation is actually about, or a GameCast build keyed
+      // off playType would show the wrong player performing the shooting
+      // pose.
+      return event.blockPlayerId
+        ? {
+            description: `${scoreContext} ${blockerName ?? 'the defense'} swats the shot away${shooterName ? `, denying ${shooterName}` : ''}.`,
+            playerId: event.blockPlayerId,
+            playerName: blockerName ?? 'A player',
+          }
+        : {
+            description: `${scoreContext} ${shooterName}'s shot rims out${rebounderName ? `, ${rebounderName} grabs the rebound` : ''}.`,
+            playerId: event.shooterId!,
+            playerName: shooterName!,
+          };
     case 'miss_off_reb':
       return {
         description: `${scoreContext} ${rebounderName ?? 'the offense'} keeps the possession alive with an offensive rebound.`,

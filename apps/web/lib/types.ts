@@ -188,6 +188,8 @@ export interface GameMvp {
   leverageComponent: number;
 }
 
+export type SkinTone = 'light' | 'medium' | 'dark';
+
 export interface GameResult {
   scoreA: number;
   scoreB: number;
@@ -198,6 +200,8 @@ export interface GameResult {
   overtimePeriods: number;
   recapHeadline: string | null;
   recapArticle: string | null;
+  /** playerId (a PlayerStint id) -> skin tone, for GameCast sprite personalization (spec 4a). */
+  playerSkinTones: Record<string, SkinTone>;
 }
 
 export interface MatchState {

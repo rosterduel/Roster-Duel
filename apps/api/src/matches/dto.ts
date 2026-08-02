@@ -80,6 +80,15 @@ export interface GameResultDto {
   overtimePeriods: number;
   recapHeadline: string | null;
   recapArticle: string | null;
+  /**
+   * `playerId -> skinTone` (spec 4a's GameCast sprite personalization —
+   * "the only personalization is matching the real player's skin tone").
+   * `playerId` here is a PlayerStint id, the same id space `boxScore` and
+   * `highlights` use — the sim engine itself never carries this, since it
+   * has no concept of what a player looks like; this is assembled at the
+   * API layer from the two locked rosters' picks.
+   */
+  playerSkinTones: Record<string, string>;
 }
 
 export interface MatchStateDto {

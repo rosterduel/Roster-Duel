@@ -18,3 +18,60 @@
 .animate-round-reveal {
   animation: round-reveal 300ms ease-out;
 }
+
+/* GameCast (spec 4a): the outcome badge ("+3", "BLOCK", ...) pops up and
+   fades once a play resolves, timed to when the ball animation completes.
+   Lives on an INNER group nested inside a plain positioning <g> — a CSS
+   animation on `transform` would otherwise replace that outer group's
+   SVG `transform` attribute outright rather than combining with it. */
+@keyframes badge-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6) translateY(6px);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1.1) translateY(-4px);
+  }
+  35% {
+    transform: scale(1) translateY(0);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+}
+
+.animate-badge-pop {
+  animation: badge-pop 1.4s ease-out forwards;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* GameCast: the player sprite fades in fresh for each new highlight. Only
+   opacity — never transform, since the sprite's own position/scale is set
+   via the SVG `transform` attribute and a CSS transform animation would
+   override that outright rather than combine with it. */
+@keyframes sprite-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-sprite-fade-in {
+  animation: sprite-fade-in 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-round-reveal,
+  .animate-badge-pop,
+  .animate-sprite-fade-in {
+    animation: none;
+  }
+}

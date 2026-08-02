@@ -165,6 +165,7 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
             highlights={match.gameResult.highlights}
             teamAName={match.sideA.teamName ?? 'Team A'}
             teamBName={match.sideB.teamName ?? 'Team B'}
+            playerSkinTones={match.gameResult.playerSkinTones}
             onDone={() => setShowGameCast(false)}
           />
         </main>

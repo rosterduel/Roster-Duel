@@ -81,3 +81,45 @@ describe('buildHighlights score-context framing', () => {
     expect(ot3.description).toContain('in the OT3,');
   });
 });
+
+describe('buildHighlights block attribution (spec 4a GameCast: the sprite must perform the actual action)', () => {
+  const nameById = new Map([
+    ['shooter-1', 'The Shooter'],
+    ['blocker-1', 'The Blocker'],
+    ['rebounder-1', 'The Rebounder'],
+  ]);
+
+  it('attributes a blocked shot to the BLOCKER, not the rebounder who recovers it', () => {
+    const events = [
+      event({
+        outcome: 'miss_def_reb',
+        playType: 'block',
+        shooterId: 'shooter-1',
+        blockPlayerId: 'blocker-1',
+        reboundPlayerId: 'rebounder-1',
+      }),
+    ];
+
+    const [highlight] = buildHighlights(events, nameById, 1);
+    expect(highlight.playerId).toBe('blocker-1');
+    expect(highlight.playerName).toBe('The Blocker');
+    expect(highlight.description).toContain('The Blocker');
+    expect(highlight.description).toContain('The Shooter');
+  });
+
+  it('attributes an UNBLOCKED miss to the SHOOTER, not the rebounder — playType stays a shot-missed type either way, so the highlighted player has to match the shooting-pose animation that type drives', () => {
+    const events = [
+      event({
+        outcome: 'miss_def_reb',
+        playType: 'two_pointer_missed',
+        shooterId: 'shooter-1',
+        reboundPlayerId: 'rebounder-1',
+      }),
+    ];
+
+    const [highlight] = buildHighlights(events, nameById, 1);
+    expect(highlight.playerId).toBe('shooter-1');
+    expect(highlight.playerName).toBe('The Shooter');
+    expect(highlight.description).toContain('The Shooter');
+  });
+});

@@ -1,40 +1,37 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { CourtZone, Highlight } from '../lib/types';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Basketball } from './Basketball';
+import { CourtDiagram } from './CourtDiagram';
+import { PlayerSprite } from './PlayerSprite';
+import { buildArcKeyframes, computeBlockDeflection, OUTCOME_BADGE, POSE_BY_PLAY_TYPE, spritePositionForPlay, ZONE_POSITIONS } from '../lib/court';
+import { Highlight, SkinTone } from '../lib/types';
 
-// Simplified schematic court positions (percent of container), NOT real
-// coordinates — spec section 4a explicitly wants a retro/8-bit-style
-// diagram, not realistic rendering. Hoop sits at the right edge; every shot
-// resolves at "paint" regardless of make/miss (see sim-engine's PlayType
-// doc comment), which is why endLocation is always near the hoop here.
-const ZONE_POSITIONS: Record<CourtZone, { x: number; y: number }> = {
-  backcourt: { x: 6, y: 50 },
-  mid_range: { x: 55, y: 50 },
-  paint: { x: 88, y: 50 },
-  free_throw_line: { x: 72, y: 50 },
-  three_left: { x: 42, y: 85 },
-  three_right: { x: 42, y: 15 },
-  three_top: { x: 35, y: 50 },
-};
-
-const PLAY_DURATION_MS = 900;
-const HOLD_DURATION_MS = 1800;
+const BALL_FLIGHT_MS = 1000;
+const HOLD_MS = 1600;
+const DEFAULT_SKIN_TONE: SkinTone = 'medium';
 
 function formatClock(seconds: number): string {
   const clamped = Math.max(0, Math.round(seconds));
   return `${Math.floor(clamped / 60)}:${(clamped % 60).toString().padStart(2, '0')}`;
 }
 
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+}
+
 export function GameCastPlayback({
   highlights,
   teamAName,
   teamBName,
+  playerSkinTones,
   onDone,
 }: {
   highlights: Highlight[];
   teamAName: string;
   teamBName: string;
+  /** playerId (a PlayerStint id) -> skin tone, for sprite personalization (spec 4a). */
+  playerSkinTones: Record<string, SkinTone>;
   onDone: () => void;
 }) {
   // Spec 4a: play back in chronological order, distinct from the leverage-
@@ -42,22 +39,54 @@ export function GameCastPlayback({
   const chronological = useMemo(() => [...highlights].sort((a, b) => a.possessionIndex - b.possessionIndex), [highlights]);
 
   const [index, setIndex] = useState(0);
-  const [ballAtEnd, setBallAtEnd] = useState(false);
+  const [showBadge, setShowBadge] = useState(false);
+  const ballRef = useRef<SVGGElement>(null);
 
   const current = chronological[index];
+  const start = current ? ZONE_POSITIONS[current.startLocation] : undefined;
+  const end = current ? ZONE_POSITIONS[current.endLocation] : undefined;
+  const isBlock = current?.playType === 'block';
+  // Block gets a genuinely different ball path (spec 4a) — computed once
+  // per highlight, not a reskin of the normal arc.
+  const deflection = current && isBlock && start && end ? computeBlockDeflection(start, end) : null;
+  const pose = current ? POSE_BY_PLAY_TYPE[current.playType] : 'shoot';
+  const tone: SkinTone = (current && playerSkinTones[current.playerId]) || DEFAULT_SKIN_TONE;
+  const spritePos = current && start && end ? spritePositionForPlay(current.playType, start, end) : { x: 0, y: 0 };
+  const badgePos = deflection ? deflection.deflectEnd : end;
+  const ballInitialStyle = start ? { transform: `translate(${start.x}px, ${start.y}px)` } : undefined;
 
+  // Ball motion — runs before paint (useLayoutEffect) so there's no
+  // one-frame flash at the origin before the animation takes over.
+  useLayoutEffect(() => {
+    const ballEl = ballRef.current;
+    if (!ballEl || !current || !start || !end) return undefined;
+
+    if (prefersReducedMotion()) {
+      const finalPos = deflection ? deflection.deflectEnd : end;
+      ballEl.style.transform = `translate(${finalPos.x}px, ${finalPos.y}px)`;
+      return undefined;
+    }
+
+    const keyframes = deflection ? deflection.keyframes : buildArcKeyframes(start, end);
+    const anim = ballEl.animate(keyframes, { duration: BALL_FLIGHT_MS, easing: 'ease-in-out', fill: 'forwards' });
+    return () => anim.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index]);
+
+  // Outcome badge + advance-to-next-highlight timing.
   useEffect(() => {
-    setBallAtEnd(false);
-    const moveTimer = setTimeout(() => setBallAtEnd(true), 50);
+    setShowBadge(false);
+    if (!current) return undefined;
+    const badgeTimer = setTimeout(() => setShowBadge(true), BALL_FLIGHT_MS);
     const advanceTimer = setTimeout(() => {
       if (index < chronological.length - 1) {
         setIndex((i) => i + 1);
       } else {
         onDone();
       }
-    }, PLAY_DURATION_MS + HOLD_DURATION_MS);
+    }, BALL_FLIGHT_MS + HOLD_MS);
     return () => {
-      clearTimeout(moveTimer);
+      clearTimeout(badgeTimer);
       clearTimeout(advanceTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -67,10 +96,6 @@ export function GameCastPlayback({
     onDone();
     return null;
   }
-
-  const start = ZONE_POSITIONS[current.startLocation];
-  const end = ZONE_POSITIONS[current.endLocation];
-  const ballPos = ballAtEnd ? end : start;
 
   return (
     <div className="mx-auto max-w-xl">
@@ -83,25 +108,24 @@ export function GameCastPlayback({
         </button>
       </div>
 
-      {/* Retro/8-bit-style schematic court — simple diagram, not realistic rendering (spec 4a). */}
-      <div
-        className="relative aspect-[2/1] w-full overflow-hidden rounded-lg border-4 border-gray-800 bg-green-700"
-        style={{ imageRendering: 'pixelated' }}
-      >
-        {/* hoop */}
-        <div className="absolute right-[4%] top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 border-yellow-300" />
-        {/* half-court arc hint */}
-        <div className="absolute left-[30%] top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/40" />
-
-        <div
-          className="absolute h-3 w-3 rounded-full bg-orange-400 shadow-[0_0_0_2px_rgba(0,0,0,0.6)] transition-all ease-linear"
-          style={{
-            left: `${ballPos.x}%`,
-            top: `${ballPos.y}%`,
-            transform: 'translate(-50%, -50%)',
-            transitionDuration: `${PLAY_DURATION_MS}ms`,
-          }}
-        />
+      {/* Retro/8-bit-style schematic court — real markings, not an abstract rectangle (spec 4a). Aerial/top-down camera angle unchanged. */}
+      <div className="overflow-hidden rounded-lg border-4 border-[#8F5A1D]" style={{ imageRendering: 'pixelated' }}>
+        <div className="aspect-[2/1] w-full">
+          <CourtDiagram>
+            <PlayerSprite key={index} pose={pose} tone={tone} x={spritePos.x} y={spritePos.y} scale={1.7} className="animate-sprite-fade-in" />
+            <Basketball ref={ballRef} style={ballInitialStyle} />
+            {showBadge && badgePos && (
+              <g transform={`translate(${badgePos.x}, ${badgePos.y})`}>
+                <g key={`badge-${index}`} className="animate-badge-pop">
+                  <rect x={-30} y={-40} width={60} height={26} rx={4} fill="#FFD23F" stroke="#241B12" strokeWidth={1} />
+                  <text x={0} y={-27} textAnchor="middle" dominantBaseline="middle" fontFamily="ui-monospace, monospace" fontWeight={800} fontSize={15} fill="#241B12">
+                    {OUTCOME_BADGE[current.playType]}
+                  </text>
+                </g>
+              </g>
+            )}
+          </CourtDiagram>
+        </div>
       </div>
 
       <div className="mt-3 rounded-lg bg-gray-900 p-3 text-white">
