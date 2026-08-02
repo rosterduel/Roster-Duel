@@ -408,6 +408,23 @@ duplicate case) with:
 npm run verify:sim -w apps/api -- 42
 ```
 
+**Data accuracy note:** the seed data is hand-curated, illustrative, and
+explicitly *not* verified line-by-line against a canonical source (see
+"Player data sourcing" below) — a user spot-check against real records
+caught one drifted figure (LeBron's Cleveland-stint FG%, corrected from
+0.476 to 0.470). Rather than a full external-source verification pass
+(disproportionate effort for this stage), `scripts/checkStatPlausibility.ts`
+(`npm run check:stats -w apps/api`) runs a cheap automated structural
+check instead — flagging any stat outside a realistic real-NBA range, plus
+an internal-consistency check (a player's FG%, 3P%, and 3PA rate all
+imply a 2-point FG%; if that implied number isn't realistic, the three
+figures can't all be right together, even if each looks fine alone). It
+does not require or perform any external lookups. It won't catch every
+possible drifted number (only structural/internal inconsistencies, not
+"this individual number is subtly wrong"), but it's a cheap first pass
+that already ran clean (0 errors, 2 low-confidence warnings on very-low-
+volume 3PT shooters where a noisy percentage is expected, not a typo).
+
 ## Draft flow & matchmaking (spec section 4)
 
 `apps/api/prisma/schema.prisma` now models the full data model — spec

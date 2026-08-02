@@ -13,6 +13,7 @@
     "db:seed": "prisma db seed",
     "verify:sim": "ts-node scripts/verifySimEndToEnd.ts",
     "try:recap": "ts-node scripts/tryRecap.ts",
+    "check:stats": "ts-node scripts/checkStatPlausibility.ts",
     "test": "jest"
   },
   "prisma": {

@@ -536,7 +536,15 @@ export const NBA_SEED_STINTS: SeedPlayerStint[] = [
   {
     personKey: 'lebron_james', name: 'LeBron James', position: 'SF', team: 'Cleveland', era: 'two_thousands',
     stintStartYear: 2003, stintEndYear: 2009, skinTone: 'dark',
-    stats: { ppg: 27.8, rpg: 7.0, apg: 6.9, spg: 1.7, bpg: 0.7, tovPg: 3.4, fgPct: 0.476, threePtPct: 0.327, threePtRate: 0.20, ftPct: 0.733, astRate: 0.32, rebRate: 0.13, stlRate: 0.021, blkRate: 0.014 },
+    // fgPct corrected from an earlier hand-typed 0.476 to 0.470 after a
+    // user-prompted spot-check against real season splits (2003-04 through
+    // 2008-09: .417/.472/.480/.476/.484/.489, unweighted average ~.4697) —
+    // a true volume-weighted average would need full FGM/FGA per season,
+    // which wasn't retrievable (basketball-reference/landofbasketball both
+    // block direct fetches); the two seasons whose exact attempt volumes
+    // WERE retrievable (2003-04: 1492 FGA; 2008-09: 1613 FGA) don't differ
+    // wildly enough to expect the weighted figure to land far from this.
+    stats: { ppg: 27.8, rpg: 7.0, apg: 6.9, spg: 1.7, bpg: 0.7, tovPg: 3.4, fgPct: 0.470, threePtPct: 0.327, threePtRate: 0.20, ftPct: 0.733, astRate: 0.32, rebRate: 0.13, stlRate: 0.021, blkRate: 0.014 },
     usageRate: 0.32,
   },
   {
