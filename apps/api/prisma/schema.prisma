@@ -107,10 +107,15 @@ enum SkinTone {
 
 // City/moniker only (e.g. "Chicago," "Utah") — NOT full franchise names or
 // logos, per spec 4c's trademark-avoidance guidance (section 10). colorHex
-// is a cosmetic, consistent-per-team visual cue for the draft screen; it
-// deliberately does not need to match real team branding (spec is explicit
-// about this) — picked for visual distinctiveness across the seeded teams,
-// not researched against real franchise colors.
+// is each team's REAL, recognizable primary color (spec 4c's revised
+// guidance — an earlier version of this section said colors just needed to
+// be mutually distinct, not accurate; that's now corrected, since e.g.
+// Miami showing as blue-green reads as a bug, not a design choice). See
+// seedData/teams.ts for the color table and the handful of shades
+// deliberately shifted off their literal real-world value where the spec's
+// own color table would otherwise put two-plus teams at a near-identical
+// hue (four teams are nominally "red"; Utah and Los Angeles are both
+// nominally "purple").
 model Team {
   id       String @id @default(uuid())
   sport    Sport
@@ -268,25 +273,37 @@ model Roster {
   // guarantees this on timer expiry; a manual lock requires the drafter to
   // have filled it themselves).
   slots         Json      @default("{}")
-  // { "PG": { "teamId": "...", "era": "sixties" }, ... } — the OFFERED
-  // team+era combo per slot (spec 4c), separate from `slots` (the pick
-  // itself). Set for all 6 slots at roster-creation time: copied from the
-  // match's sharedSlotAssignments for `same_roles` matches, or drawn fresh
-  // for `independent_roles` ones (see Match.rolesMode). Respins mutate
-  // ONLY this roster's own copy from then on — even in a same_roles match,
-  // a respin is a private, forward-only divergence from the shared
-  // baseline, never resynced or shared with the opponent (confirmed design
-  // decision, not an oversight).
-  slotAssignments Json    @default("{}") @map("slot_assignments")
-  // Each is a single-use resource, shared across all 6 slots (spec 4c: ONE
-  // Team respin and ONE Era respin per draft, not per slot) — using either
-  // one on any slot flips its flag here and disables that respin type
-  // everywhere on this roster; the other stays independently available.
+  // [{ "teamId": "...", "era": "sixties" }, ...] — spec 4c's SEQUENTIAL
+  // roll design (supersedes the earlier per-slot-simultaneous version):
+  // one entry per round, NOT keyed by position — a round's roll isn't
+  // "for" any particular slot ahead of time, since the full unfiltered
+  // roster is shown and the user picks whichever open position an
+  // eligible player fills. Always exactly NBA_POSITIONS.length entries,
+  // computed once at roster-creation time (copied from the match's
+  // sharedRollSequence for `same_roles` matches, or drawn fresh for
+  // `independent_roles` ones — see Match.rolesMode). The CURRENT round is
+  // always `rollSequence[filledSlotCount]` — since exactly one pick locks
+  // in per round, the count of already-filled `slots` doubles as the
+  // round index, with no separate counter needed. Respins mutate only the
+  // entry at that current index, and only on THIS roster's own copy —
+  // even in a same_roles match, a respin is a private, forward-only
+  // divergence from the shared baseline, never resynced with the
+  // opponent (confirmed design decision, not an oversight).
+  rollSequence  Json      @default("[]") @map("roll_sequence")
+  // Each is a single-use resource for the WHOLE draft, not per-round (spec
+  // 4c) — usable on any round, at any point before that round's pick
+  // locks in, including the first or the last. Using one flips its flag
+  // here and disables that respin type for every remaining round; the
+  // other stays independently available.
   teamRespinUsed Boolean  @default(false) @map("team_respin_used")
   eraRespinUsed  Boolean  @default(false) @map("era_respin_used")
   isLocked      Boolean   @default(false) @map("is_locked")
   lockedAt      DateTime? @map("locked_at")
-  draftDeadline DateTime  @map("draft_deadline")
+  // Null when the match has no draft timer (spec section 4's new default —
+  // untimed is the default experience; the creator can opt into a timer at
+  // match-creation time). Auto-lock-on-expiry logic is skipped entirely
+  // when this is null.
+  draftDeadline DateTime? @map("draft_deadline")
   createdAt     DateTime  @default(now()) @map("created_at")
 
   matchAsA Match? @relation("MatchRosterA")
@@ -311,21 +328,25 @@ model Match {
   // Kept per spec's schema; Phase 1 always uses 1 (best-of-N is out of scope
   // for now — spec section 5.6).
   gamesToPlay       Int       @default(1) @map("games_to_play")
-  draftTimerSeconds Int       @default(300) @map("draft_timer_seconds")
+  // Null = no draft timer — the new default (spec section 4): an untimed
+  // draft is the default experience, and the match creator can optionally
+  // turn a timer on and set a limit at creation time. Non-null is that
+  // chosen number of seconds.
+  draftTimerSeconds Int?      @map("draft_timer_seconds")
   status            String    @default("drafting") // 'drafting' | 'simulating' | 'complete'
   // Spec 4e pre-match settings — chosen once by the match creator, applies
   // to both rosters.
   rolesMode         RolesMode @default(independent_roles) @map("roles_mode")
   // Empty array = no narrowing (full pool eligible). Non-empty restricts
-  // which eras/teams a slot's random draw can land on.
+  // which eras/teams a round's random roll can land on.
   includedEras      Era[]     @map("included_eras")
   includedTeamIds   String[]  @map("included_team_ids")
   // Only set (and only meaningful) when rolesMode is same_roles — the ONE
-  // team+era sequence both rosters copy into their own slotAssignments at
+  // sequence of 6 rolls both rosters copy into their own rollSequence at
   // creation time, computed once here so "same roles" actually means
   // identical, not independently-but-identically-seeded RNG draws. Null
   // for independent_roles matches, where each roster draws its own.
-  sharedSlotAssignments Json? @map("shared_slot_assignments")
+  sharedRollSequence Json?    @map("shared_roll_sequence")
   createdAt         DateTime  @default(now()) @map("created_at")
 
   gameResults GameResult[]

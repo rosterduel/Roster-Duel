@@ -1,8 +1,8 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { NBA_POSITIONS, POSITION_LABELS, POSITION_STAT_FIELDS } from '../lib/positions';
-import { DraftPoolPlayer, ERA_LABELS, Era, NbaPosition, SlotPool } from '../lib/types';
+import { NBA_POSITIONS, POSITION_LABELS, ROUND_SORT_FIELDS } from '../lib/positions';
+import { CurrentRound, ERA_LABELS, Era, NbaPosition, PickResult, RoundPlayer } from '../lib/types';
 import { PlayerCard } from './PlayerCard';
 
 function RespinButton({
@@ -22,8 +22,8 @@ function RespinButton({
   const title = usedGlobally
     ? `${label} respin already used`
     : available
-      ? `Respin ${label} — 1 use, shared across all 6 slots`
-      : `No alternative ${label.toLowerCase()} available for this slot`;
+      ? `Respin ${label} — 1 use for the whole draft, usable on any round before its pick locks in`
+      : `No alternative ${label.toLowerCase()} available for this round`;
 
   return (
     <button
@@ -42,122 +42,119 @@ function RespinButton({
   );
 }
 
+/** The "Larry Bird — Choose Position" prompt (spec 4c step 4) for a player eligible for more than one currently-open slot. */
+function ChoosePositionModal({ player, options, onChoose, onCancel }: { player: RoundPlayer; options: NbaPosition[]; onChoose: (position: NbaPosition) => void; onCancel: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-sm rounded-lg bg-white p-4 shadow-xl">
+        <h3 className="font-semibold">{player.name} — Choose Position</h3>
+        <p className="mt-1 text-sm text-gray-500">Eligible for more than one open slot — pick which one to fill.</p>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {options.map((pos) => (
+            <button
+              key={pos}
+              type="button"
+              onClick={() => onChoose(pos)}
+              className="rounded border border-orange-300 bg-orange-50 px-3 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100"
+            >
+              {POSITION_LABELS[pos]}
+            </button>
+          ))}
+        </div>
+        <button type="button" onClick={onCancel} className="mt-3 text-xs text-gray-500 underline">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function DraftBoard({
-  draftPool,
-  slots,
+  currentRound,
+  yourSlots,
+  pickedNames,
   onPick,
   onRespin,
   locked,
   teamRespinUsed,
   eraRespinUsed,
 }: {
-  draftPool: Record<string, SlotPool>;
-  slots: Record<string, string>;
-  onPick: (position: NbaPosition, playerId: string) => void;
-  onRespin: (position: NbaPosition, type: 'team' | 'era') => void;
+  currentRound: CurrentRound | null;
+  yourSlots: Record<string, string>;
+  /** Best-effort, this-session-only position -> player name map for the progress strip (spec 4c doesn't require persisting this across a reload). */
+  pickedNames: Record<string, string>;
+  onPick: (player: RoundPlayer, position?: string) => Promise<PickResult>;
+  onRespin: (type: 'team' | 'era') => void;
   locked: boolean;
   teamRespinUsed: boolean;
   eraRespinUsed: boolean;
 }) {
-  const [activePosition, setActivePosition] = useState<NbaPosition>('PG');
   const [sortKey, setSortKey] = useState('ppg');
-
-  const activeSlot = draftPool[activePosition];
-  const playersById = useMemo(() => {
-    const map = new Map<string, DraftPoolPlayer>();
-    for (const slot of Object.values(draftPool)) {
-      for (const p of slot.players) map.set(p.id, p);
-    }
-    return map;
-  }, [draftPool]);
-
-  const sortOptions = useMemo(() => {
-    const fields = POSITION_STAT_FIELDS[activePosition] ?? [];
-    const opts = [{ key: 'baseRating', label: 'Rating' }, ...fields.map((f) => ({ key: f.key, label: f.label }))];
-    // PPG first if present, since it's the default (spec section 4c: "default sort by PPG").
-    const ppgIndex = opts.findIndex((o) => o.key === 'ppg');
-    if (ppgIndex > 0) {
-      const [ppg] = opts.splice(ppgIndex, 1);
-      opts.unshift(ppg);
-    }
-    return opts;
-  }, [activePosition]);
+  const [pendingChoice, setPendingChoice] = useState<{ player: RoundPlayer; options: NbaPosition[] } | null>(null);
 
   const sortedPlayers = useMemo(() => {
-    if (!activeSlot) return [];
-    const valueOf = (p: DraftPoolPlayer) => (sortKey === 'baseRating' ? p.baseRating : (p.stats[sortKey] ?? -Infinity));
-    return [...activeSlot.players].sort((a, b) => valueOf(b) - valueOf(a));
-  }, [activeSlot, sortKey]);
+    if (!currentRound) return [];
+    const valueOf = (p: RoundPlayer) => (sortKey === 'baseRating' ? p.baseRating : (p.stats[sortKey] ?? -Infinity));
+    return [...currentRound.players].sort((a, b) => valueOf(b) - valueOf(a));
+  }, [currentRound, sortKey]);
 
-  // Reset the sort choice to the new slot's default (PPG) when switching tabs,
-  // since a stat key valid for one position (e.g. BPG) may not be visible for another.
-  function selectPosition(pos: NbaPosition) {
-    setActivePosition(pos);
-    setSortKey('ppg');
+  async function handleSelect(player: RoundPlayer) {
+    if (locked) return;
+    const result = await onPick(player);
+    if (result.status === 'choose_position') {
+      setPendingChoice({ player, options: result.eligiblePositions });
+    }
+  }
+
+  async function handleChoosePosition(position: NbaPosition) {
+    if (!pendingChoice) return;
+    await onPick(pendingChoice.player, position);
+    setPendingChoice(null);
+  }
+
+  if (!currentRound) {
+    return <p className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center text-gray-500">Every position is filled — ready to lock in your roster.</p>;
   }
 
   return (
     <div>
       <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
         {NBA_POSITIONS.map((pos) => {
-          const filledPlayer = slots[pos] ? playersById.get(slots[pos]) : undefined;
-          const slot = draftPool[pos];
+          const filled = Boolean(yourSlots[pos]);
           return (
-            <button
-              key={pos}
-              type="button"
-              data-testid={`position-tab-${pos}`}
-              onClick={() => selectPosition(pos)}
-              className={`rounded-lg border p-2 text-left text-xs transition ${
-                activePosition === pos ? 'border-orange-500 ring-1 ring-orange-500' : 'border-gray-200'
-              } ${filledPlayer ? 'bg-green-50' : 'bg-white'}`}
-            >
-              <div className="flex items-center gap-1 font-semibold text-gray-700">
-                {slot && <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: slot.teamColorHex }} />}
-                {pos}
-              </div>
-              <div className="truncate text-gray-500">{filledPlayer ? filledPlayer.name : slot ? `${slot.teamName} ${ERA_LABELS[slot.era as Era] ?? slot.era}` : '…'}</div>
-            </button>
+            <div key={pos} className={`rounded-lg border p-2 text-left text-xs ${filled ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white'}`}>
+              <div className="font-semibold text-gray-700">{pos}</div>
+              <div className="truncate text-gray-500">{filled ? (pickedNames[pos] ?? '✓ picked') : '—'}</div>
+            </div>
           );
         })}
       </div>
 
-      {activeSlot && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white p-3">
-          <div className="flex items-center gap-2">
-            <span className="inline-block h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: activeSlot.teamColorHex }} />
-            <div>
-              <div className="font-semibold text-gray-800">
-                {activeSlot.teamName} · {ERA_LABELS[activeSlot.era as Era] ?? activeSlot.era}
-              </div>
-              <div className="text-xs text-gray-500">{POSITION_LABELS[activePosition]} pool</div>
+      <div key={currentRound.roundIndex} className="animate-round-reveal mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white p-3">
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: currentRound.teamColorHex }} />
+          <div>
+            <div className="font-semibold text-gray-800">
+              {currentRound.teamName} · {ERA_LABELS[currentRound.era as Era] ?? currentRound.era}
+            </div>
+            <div className="text-xs text-gray-500">
+              Round {currentRound.roundIndex + 1} of {currentRound.totalRounds}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <RespinButton
-              label="Team"
-              available={activeSlot.teamRespinAvailable}
-              usedGlobally={teamRespinUsed}
-              onClick={() => onRespin(activePosition, 'team')}
-              disabled={locked}
-            />
-            <RespinButton
-              label="Era"
-              available={activeSlot.eraRespinAvailable}
-              usedGlobally={eraRespinUsed}
-              onClick={() => onRespin(activePosition, 'era')}
-              disabled={locked}
-            />
-          </div>
         </div>
-      )}
+        <div className="flex items-center gap-2">
+          <RespinButton label="Team" available={currentRound.teamRespinAvailable} usedGlobally={teamRespinUsed} onClick={() => onRespin('team')} disabled={locked} />
+          <RespinButton label="Era" available={currentRound.eraRespinAvailable} usedGlobally={eraRespinUsed} onClick={() => onRespin('era')} disabled={locked} />
+        </div>
+      </div>
 
       <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-600">{POSITION_LABELS[activePosition]} pool</h2>
+        <h2 className="text-sm font-semibold text-gray-600">This round&apos;s roster</h2>
         <label className="flex items-center gap-1 text-xs text-gray-500">
           Sort by
           <select value={sortKey} onChange={(e) => setSortKey(e.target.value)} className="rounded border border-gray-300 px-1 py-0.5">
-            {sortOptions.map((o) => (
+            <option value="baseRating">Rating</option>
+            {ROUND_SORT_FIELDS.map((o) => (
               <option key={o.key} value={o.key}>
                 {o.label}
               </option>
@@ -168,22 +165,13 @@ export function DraftBoard({
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {sortedPlayers.map((player) => (
-          <PlayerCard
-            key={player.id}
-            player={player}
-            slotPosition={activePosition}
-            selected={slots[activePosition] === player.id}
-            disabled={locked}
-            onSelect={() => onPick(activePosition, player.id)}
-          />
+          <PlayerCard key={player.id} player={player} disabled={locked} onSelect={handleSelect} />
         ))}
-        {sortedPlayers.length === 0 && (
-          <p className="col-span-full rounded border border-dashed border-gray-300 p-4 text-center text-sm text-gray-500">
-            No eligible players in this pool — this is a known limitation of the current seed pool.{' '}
-            {(activeSlot?.teamRespinAvailable || activeSlot?.eraRespinAvailable) && 'Try a respin above.'}
-          </p>
-        )}
       </div>
+
+      {pendingChoice && (
+        <ChoosePositionModal player={pendingChoice.player} options={pendingChoice.options} onChoose={handleChoosePosition} onCancel={() => setPendingChoice(null)} />
+      )}
     </div>
   );
 }

@@ -74,6 +74,23 @@ export const POSITION_STAT_FIELDS: Record<NbaPosition, StatField[]> = {
   ],
 };
 
+/**
+ * Sort options for the current round's roster (spec 4c) — the round shows
+ * every position at once (unfiltered), so unlike POSITION_STAT_FIELDS
+ * there's no single position to key the stat line off of. PPG stays the
+ * default sort per spec section 4c's "default sort by PPG."
+ */
+export const ROUND_SORT_FIELDS: StatField[] = [
+  { key: 'ppg', label: 'PPG' },
+  { key: 'rpg', label: 'RPG' },
+  { key: 'apg', label: 'APG' },
+  { key: 'spg', label: 'SPG' },
+  { key: 'bpg', label: 'BPG' },
+  { key: 'fg_pct', label: 'FG%', format: 'pct' },
+  { key: 'three_pt_pct', label: '3P%', format: 'pct' },
+  { key: 'ft_pct', label: 'FT%', format: 'pct' },
+];
+
 export function formatStatValue(value: number | undefined, format?: 'pct'): string {
   if (value === undefined) return '—';
   if (format === 'pct') return `${Math.round(value * 100)}%`;

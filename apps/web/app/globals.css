@@ -1,1 +1,20 @@
 @import "tailwindcss";
+
+/* Brief reveal animation for a new draft round's team+era roll (spec 4c
+   step 1: "reveals it with a brief spin/reveal animation"). Deliberately
+   cheap — a fade+scale pop, not a real spinner — re-triggered each round
+   by keying the element on roundIndex so React remounts it. */
+@keyframes round-reveal {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-round-reveal {
+  animation: round-reveal 300ms ease-out;
+}

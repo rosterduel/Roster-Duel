@@ -1,10 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { ApiError, api } from '../../../lib/api';
-import { NbaPosition } from '../../../lib/types';
+import { PickResult, RoundPlayer } from '../../../lib/types';
 import type { MatchState } from '../../../lib/types';
 import { NBA_POSITIONS } from '../../../lib/positions';
 import { DraftBoard } from '../../../components/DraftBoard';
@@ -16,18 +16,19 @@ import { NewspaperRecap } from '../../../components/NewspaperRecap';
 
 const POLL_INTERVAL_MS = 4000;
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
-const SAVE_DEBOUNCE_MS = 600;
 
 export function DraftRoomClient({ roomCode }: { roomCode: string }) {
   const [match, setMatch] = useState<MatchState | null>(null);
   const [rosterId, setRosterId] = useState<string | null>(null);
-  const [localSlots, setLocalSlots] = useState<Record<string, string>>({});
+  // Best-effort, this-session-only record of what got picked into each
+  // slot, purely for the progress strip's player-name display — the
+  // server's source of truth is match.yourSlots (ids only); spec 4c
+  // doesn't require persisting names across a reload.
+  const [pickedNames, setPickedNames] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [locking, setLocking] = useState(false);
-  const [respinning, setRespinning] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [showGameCast, setShowGameCast] = useState(false);
-  const initializedSlotsRef = useRef(false);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refetchState = useCallback(async () => {
     try {
@@ -76,40 +77,37 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
     };
   }, [roomCode, refetchState]);
 
-  // Seed local slot state from the server once, on first load only — after
-  // that, local state is the source of truth until saved (avoids the poll
-  // clobbering in-progress picks).
-  useEffect(() => {
-    if (!initializedSlotsRef.current && match?.yourSlots) {
-      setLocalSlots(match.yourSlots);
-      initializedSlotsRef.current = true;
-    }
-  }, [match]);
-
-  function handlePick(position: NbaPosition, playerId: string) {
-    const next = { ...localSlots, [position]: playerId };
-    setLocalSlots(next);
-    if (!rosterId) return;
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      api.saveDraftSlots(rosterId, next).catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to save your pick.'));
-    }, SAVE_DEBOUNCE_MS);
-  }
-
-  async function handleRespin(position: NbaPosition, type: 'team' | 'era') {
-    if (!rosterId || respinning) return;
-    setRespinning(true);
+  async function handlePick(player: RoundPlayer, position?: string): Promise<PickResult> {
+    if (!rosterId) throw new Error('Not ready to pick yet.');
+    setPicking(true);
     setError(null);
     try {
-      const state = await api.respinSlot(rosterId, position, type);
+      const result = await api.pickPlayer(rosterId, player.id, position);
+      if (result.status === 'locked') {
+        const chosenPosition = Object.entries(result.match.yourSlots ?? {}).find(([, id]) => id === player.id)?.[0];
+        if (chosenPosition) setPickedNames((prev) => ({ ...prev, [chosenPosition]: player.name }));
+        setMatch(result.match);
+      }
+      return result;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to draft that player.');
+      throw err;
+    } finally {
+      setPicking(false);
+    }
+  }
+
+  async function handleRespin(type: 'team' | 'era') {
+    if (!rosterId || picking) return;
+    setPicking(true);
+    setError(null);
+    try {
+      const state = await api.respinCurrentRound(rosterId, type);
       setMatch(state);
-      // A respin clears any existing pick for that slot server-side — sync
-      // local state so the draft board doesn't keep showing a stale "Selected" pick.
-      if (state.yourSlots) setLocalSlots(state.yourSlots);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to respin.');
     } finally {
-      setRespinning(false);
+      setPicking(false);
     }
   }
 
@@ -238,6 +236,8 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
     );
   }
 
+  const filledCount = NBA_POSITIONS.filter((p) => match.yourSlots?.[p]).length;
+
   return (
     <main className="mx-auto max-w-5xl p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -248,31 +248,30 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
             {opponentRoster?.joined ? (opponentRoster.isLocked ? 'Opponent is ready' : 'Opponent is drafting too') : 'Waiting for an opponent to join'}
           </p>
         </div>
-        {yourRoster?.draftDeadline && (
-          <div className="text-sm text-gray-600">
-            Time left: <DraftTimer deadline={yourRoster.draftDeadline} onExpire={refetchState} />
-          </div>
-        )}
+        <div className="text-sm text-gray-600">
+          Time left: <DraftTimer deadline={yourRoster?.draftDeadline ?? null} onExpire={refetchState} />
+        </div>
       </div>
 
       {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
 
       <DraftBoard
-        draftPool={match.yourDraftPool ?? {}}
-        slots={localSlots}
+        currentRound={match.yourCurrentRound}
+        yourSlots={match.yourSlots ?? {}}
+        pickedNames={pickedNames}
         onPick={handlePick}
         onRespin={handleRespin}
-        locked={locking || respinning}
+        locked={locking || picking}
         teamRespinUsed={match.yourTeamRespinUsed ?? false}
         eraRespinUsed={match.yourEraRespinUsed ?? false}
       />
 
       <div className="mt-6 flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4">
-        <p className="text-sm text-gray-500">{NBA_POSITIONS.filter((p) => localSlots[p]).length} / 6 positions filled</p>
+        <p className="text-sm text-gray-500">{filledCount} / 6 positions filled</p>
         <button
           type="button"
           onClick={handleLock}
-          disabled={locking || NBA_POSITIONS.some((p) => !localSlots[p])}
+          disabled={locking || filledCount < NBA_POSITIONS.length}
           className="rounded bg-orange-600 px-4 py-2 font-medium text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-gray-300"
         >
           {locking ? 'Locking…' : 'Lock roster'}

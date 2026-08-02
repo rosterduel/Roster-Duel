@@ -14,6 +14,9 @@ const TIMER_OPTIONS = [
 
 export default function HomePage() {
   const router = useRouter();
+  // Spec section 4's default: an untimed draft. The creator can opt into a
+  // timer and pick a duration — draftTimerSeconds is only sent when timerEnabled is true.
+  const [timerEnabled, setTimerEnabled] = useState(false);
   const [draftTimerSeconds, setDraftTimerSeconds] = useState(300);
   const [rolesMode, setRolesMode] = useState<RolesMode>('independent_roles');
   const [teams, setTeams] = useState<Team[]>([]);
@@ -43,7 +46,7 @@ export default function HomePage() {
     setError(null);
     try {
       const match = await api.createMatch({
-        draftTimerSeconds,
+        draftTimerSeconds: timerEnabled ? draftTimerSeconds : undefined,
         rolesMode,
         includedEras: includedEras.length > 0 ? includedEras : undefined,
         includedTeamIds: includedTeamIds.length > 0 ? includedTeamIds : undefined,
@@ -80,20 +83,26 @@ export default function HomePage() {
         <h2 className="font-semibold">Start a friend match</h2>
         <p className="mt-1 text-sm text-gray-500">You&apos;ll get a shareable link — send it to whoever you&apos;re playing.</p>
 
-        <label className="mt-4 block text-sm text-gray-600">
-          Draft timer
-          <select
-            value={draftTimerSeconds}
-            onChange={(e) => setDraftTimerSeconds(Number(e.target.value))}
-            className="mt-1 w-full rounded border border-gray-300 p-2"
-          >
-            {TIMER_OPTIONS.map((opt) => (
-              <option key={opt.seconds} value={opt.seconds}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="mt-4">
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <input type="checkbox" checked={timerEnabled} onChange={(e) => setTimerEnabled(e.target.checked)} />
+            Add a draft timer
+          </label>
+          <p className="mt-0.5 text-xs text-gray-400">Off by default — an untimed draft is the default experience.</p>
+          {timerEnabled && (
+            <select
+              value={draftTimerSeconds}
+              onChange={(e) => setDraftTimerSeconds(Number(e.target.value))}
+              className="mt-2 w-full rounded border border-gray-300 p-2"
+            >
+              {TIMER_OPTIONS.map((opt) => (
+                <option key={opt.seconds} value={opt.seconds}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
 
         <fieldset className="mt-4">
           <legend className="text-sm text-gray-600">Roles for both players</legend>

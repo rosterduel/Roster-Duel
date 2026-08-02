@@ -1,27 +1,27 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Match, Roster, User } from '@prisma/client';
-import { GameResult as SimGameResult, NbaPosition, simulateGame } from '@roster-duel/sim-engine';
+import { GameResult as SimGameResult, simulateGame } from '@roster-duel/sim-engine';
 import { PrismaService } from '../prisma/prisma.service';
 import { createAnthropicRecapGenerator } from '../recap/anthropicRecapGenerator';
 import { generateGameRecap, toRecapPromptInput } from '../recap/generateGameRecap';
 import { validateRecapGrounding } from '../recap/validateRecapGrounding';
 import { NBA_POSITIONS, SlottedStint, isNbaPosition, toTeamInput } from '../sim/toTeamInput';
 import { autoFillRosterSlots, RatedCandidate } from './draftAutoFill';
-import { buildPersonKeyToSlot, filterEligibleForSlot, isDuplicateInSlot } from './draftPool';
-import { CreateMatchRequest, CreateMatchResponse, DraftPoolPlayerDto, GameResultDto, MatchStateDto, SideStatusDto, SlotPoolDto } from './dto';
+import { buildPersonKeyToSlot, isAlreadyDrafted, openPositionsForPlayer } from './draftPool';
+import { CreateMatchRequest, CreateMatchResponse, CurrentRoundDto, GameResultDto, MatchStateDto, PickResultDto, RoundPlayerDto, SideStatusDto } from './dto';
 import { MatchesGateway } from './matches.gateway';
 import { generateRoomCode } from './roomCode';
 import { drawEraRespinCombo, drawRandomCombo, drawTeamRespinCombo, hasEraRespinAlternative, hasTeamRespinAlternative, TeamEraCombo } from './slotAssignment';
 
 const MIN_DRAFT_TIMER_SECONDS = 60;
 const MAX_DRAFT_TIMER_SECONDS = 30 * 60;
-const DEFAULT_DRAFT_TIMER_SECONDS = 5 * 60;
 const ROOM_CODE_GENERATION_ATTEMPTS = 10;
 const VALID_ERAS = ['sixties', 'seventies', 'eighties', 'nineties', 'two_thousands', 'twenty_tens', 'twenty_twenties'];
 const REQUIRED_NBA_POSITIONS = NBA_POSITIONS.filter((p) => p !== '6MAN');
 
 type MatchWithRosters = Match & { rosterA: (Roster & { user: User }) | null; rosterB: (Roster & { user: User }) | null };
-type SlotAssignments = Record<string, TeamEraCombo>;
+/** One entry per draft round (spec 4c's sequential redesign) — NOT keyed by position, since a round's roll isn't "for" any particular slot ahead of time. Always length NBA_POSITIONS.length once computed. */
+type RollSequence = TeamEraCombo[];
 
 @Injectable()
 export class MatchesService {
@@ -33,8 +33,8 @@ export class MatchesService {
   ) {}
 
   async createMatch(user: User, options?: CreateMatchRequest): Promise<CreateMatchResponse> {
-    const draftTimerSeconds = clampDraftTimer(options?.draftTimerSeconds);
-    const draftDeadline = new Date(Date.now() + draftTimerSeconds * 1000);
+    const draftTimerSeconds = options?.draftTimerSeconds !== undefined ? clampDraftTimer(options.draftTimerSeconds) : null;
+    const draftDeadline = draftTimerSeconds !== null ? new Date(Date.now() + draftTimerSeconds * 1000) : null;
     const rolesMode = options?.rolesMode === 'same_roles' ? 'same_roles' : 'independent_roles';
     const includedEras = validateIncludedEras(options?.includedEras);
     const includedTeamIds = options?.includedTeamIds ?? [];
@@ -42,16 +42,16 @@ export class MatchesService {
     await this.assertFilterIsDraftable(includedEras, includedTeamIds);
 
     const availableCombos = await this.loadAvailableCombos(includedEras, includedTeamIds);
-    // Spec 4e: "same roles" means both rosters get the IDENTICAL initial
-    // sequence — computed ONCE here and stored on the match, not
-    // independently re-drawn per roster (which would just be two
-    // separately-random sequences that happen to use the same method, not
-    // actually identical).
-    const sharedSlotAssignments = rolesMode === 'same_roles' ? this.computeSlotAssignments(availableCombos) : null;
-    const rosterASlotAssignments = sharedSlotAssignments ?? this.computeSlotAssignments(availableCombos);
+    // Spec 4e: "same roles" means both rosters play the IDENTICAL sequence
+    // of rolls, round by round — computed ONCE here and stored on the
+    // match, not independently re-drawn per roster (which would just be
+    // two separately-random sequences that happen to use the same method,
+    // not actually identical).
+    const sharedRollSequence = rolesMode === 'same_roles' ? this.computeRollSequence(availableCombos) : null;
+    const rosterARollSequence = sharedRollSequence ?? this.computeRollSequence(availableCombos);
 
     const roster = await this.prisma.roster.create({
-      data: { userId: user.id, sport: 'nba', slots: {}, slotAssignments: rosterASlotAssignments as object, draftDeadline },
+      data: { userId: user.id, sport: 'nba', slots: {}, rollSequence: rosterARollSequence as object, draftDeadline },
     });
 
     const roomCode = await this.generateUniqueRoomCode();
@@ -71,7 +71,7 @@ export class MatchesService {
         rolesMode,
         includedEras: includedEras as never,
         includedTeamIds,
-        sharedSlotAssignments: (sharedSlotAssignments as object | null) ?? undefined,
+        sharedRollSequence: (sharedRollSequence as object | null) ?? undefined,
       },
     });
 
@@ -81,7 +81,7 @@ export class MatchesService {
       yourSide: 'A',
       rosterId: roster.id,
       draftTimerSeconds,
-      draftDeadline: draftDeadline.toISOString(),
+      draftDeadline: draftDeadline ? draftDeadline.toISOString() : null,
     };
   }
 
@@ -98,16 +98,16 @@ export class MatchesService {
       throw new ConflictException('This match already has two players.');
     }
 
-    const draftDeadline = new Date(Date.now() + match.draftTimerSeconds * 1000);
+    const draftDeadline = match.draftTimerSeconds !== null ? new Date(Date.now() + match.draftTimerSeconds * 1000) : null;
     // Same-roles: copy the match's shared sequence exactly, not a fresh
     // draw. Independent-roles: this roster draws its own.
-    const slotAssignments: SlotAssignments =
-      match.rolesMode === 'same_roles' && match.sharedSlotAssignments
-        ? (match.sharedSlotAssignments as unknown as SlotAssignments)
-        : this.computeSlotAssignments(await this.loadAvailableCombos(match.includedEras, match.includedTeamIds));
+    const rollSequence: RollSequence =
+      match.rolesMode === 'same_roles' && match.sharedRollSequence
+        ? (match.sharedRollSequence as unknown as RollSequence)
+        : this.computeRollSequence(await this.loadAvailableCombos(match.includedEras, match.includedTeamIds));
 
     const roster = await this.prisma.roster.create({
-      data: { userId: user.id, sport: 'nba', slots: {}, slotAssignments: slotAssignments as object, draftDeadline },
+      data: { userId: user.id, sport: 'nba', slots: {}, rollSequence: rollSequence as object, draftDeadline },
     });
     const updated = await this.prisma.match.update({
       where: { id: match.id },
@@ -118,20 +118,17 @@ export class MatchesService {
     return toCreateMatchResponse(updated, 'B');
   }
 
-  /** Respins the Team or Era for one slot (spec 4c) — each is a single-use resource shared across all 6 slots on this roster. */
-  async respinSlot(rosterId: string, user: User, position: string, respinType: 'team' | 'era'): Promise<MatchStateDto> {
+  /** Respins the Team or Era of the CURRENT round's not-yet-picked roll (spec 4c) — each is a single-use resource for the whole draft, usable on any round. */
+  async respinCurrentRound(rosterId: string, user: User, respinType: 'team' | 'era'): Promise<MatchStateDto> {
     const roster = await this.getOwnedRosterOrThrow(rosterId, user);
     const match = await this.findMatchByRosterOrThrow(roster.id);
 
     if (roster.isLocked) {
       throw new BadRequestException('This roster is already locked.');
     }
-    if (roster.draftDeadline.getTime() <= Date.now()) {
+    if (this.isExpired(roster)) {
       await this.autoLockRoster(roster);
       throw new BadRequestException('Your draft time expired — your roster was auto-locked.');
-    }
-    if (!isNbaPosition(position)) {
-      throw new BadRequestException(`"${position}" is not a valid NBA draft slot.`);
     }
     if (respinType === 'team' && roster.teamRespinUsed) {
       throw new BadRequestException('Your Team respin has already been used.');
@@ -140,28 +137,31 @@ export class MatchesService {
       throw new BadRequestException('Your Era respin has already been used.');
     }
 
-    const slotAssignments = roster.slotAssignments as unknown as SlotAssignments;
-    const current = slotAssignments[position];
+    const slots = roster.slots as Record<string, string>;
+    const openPositions = NBA_POSITIONS.filter((p) => !slots[p]);
+    if (openPositions.length === 0) {
+      throw new BadRequestException('Every slot is already filled — there is no current round to respin.');
+    }
+    const roundIndex = NBA_POSITIONS.length - openPositions.length;
+    const rollSequence = roster.rollSequence as unknown as RollSequence;
+    const current = rollSequence[roundIndex];
     if (!current) {
-      throw new BadRequestException(`Slot "${position}" has no assigned team+era yet.`);
+      throw new BadRequestException('The current round has no rolled team+era yet.');
     }
 
     const availableCombos = await this.loadAvailableCombos(match.includedEras, match.includedTeamIds);
     const newCombo = respinType === 'team' ? drawTeamRespinCombo(current, availableCombos) : drawEraRespinCombo(current, availableCombos);
     if (!newCombo) {
-      throw new BadRequestException(`No alternative ${respinType} available to respin into for this slot — this is a known dead end with the current seed pool.`);
+      throw new BadRequestException(`No alternative ${respinType} available to respin into — this is a dead end with the current seed pool.`);
     }
 
-    // The old pick for this slot (if any) belonged to the OLD combo — it's
-    // no longer valid once the slot's pool changes, so clear it.
-    const updatedSlots = { ...(roster.slots as Record<string, string>) };
-    delete updatedSlots[position];
+    const updatedRollSequence = [...rollSequence];
+    updatedRollSequence[roundIndex] = newCombo;
 
     await this.prisma.roster.update({
       where: { id: roster.id },
       data: {
-        slotAssignments: { ...slotAssignments, [position]: newCombo } as object,
-        slots: updatedSlots,
+        rollSequence: updatedRollSequence as object,
         ...(respinType === 'team' ? { teamRespinUsed: true } : { eraRespinUsed: true }),
       },
     });
@@ -169,62 +169,74 @@ export class MatchesService {
     return this.getMatchState(match.roomCode, user);
   }
 
-  async saveDraftSlots(rosterId: string, user: User, slots: Record<string, string>): Promise<void> {
+  /**
+   * Locks in a pick for the CURRENT round (spec 4c step 4). If the tapped
+   * player is eligible for exactly one currently-open position, they're
+   * auto-assigned there. If eligible for more than one, the caller must
+   * supply `position` (chosen from a prior `choose_position` response) —
+   * omitting it when it's genuinely ambiguous returns the choice back to
+   * the caller rather than guessing.
+   */
+  async pickPlayer(rosterId: string, user: User, stintId: string, position: string | undefined): Promise<PickResultDto> {
     const roster = await this.getOwnedRosterOrThrow(rosterId, user);
+    const match = await this.findMatchByRosterOrThrow(roster.id);
 
     if (roster.isLocked) {
       throw new BadRequestException('This roster is already locked.');
     }
-    if (roster.draftDeadline.getTime() <= Date.now()) {
+    if (this.isExpired(roster)) {
       await this.autoLockRoster(roster);
       throw new BadRequestException('Your draft time expired — your roster was auto-locked.');
     }
 
-    validateSlots(slots);
-    await this.assertSlotPicksAreValid(slots, roster.slotAssignments as unknown as SlotAssignments);
-
-    await this.prisma.roster.update({ where: { id: roster.id }, data: { slots } });
-  }
-
-  /**
-   * Server-side enforcement of spec 4c/4f's draft rules — the frontend
-   * should already prevent all of these, but the server is the actual
-   * authority (a client can't be trusted to only submit valid picks):
-   * 1. Each picked stint must exist and actually belong to ITS slot's
-   *    currently-assigned team+era combo (not some other combo, and not
-   *    stale after a respin changed the combo out from under it).
-   * 2. Each picked stint must be eligible for its slot's position (6MAN
-   *    accepts anyone from the combo, unfiltered).
-   * 3. No two slots may hold the same real person (personKey), regardless
-   *    of which stint/eligible position got them there.
-   */
-  private async assertSlotPicksAreValid(slots: Record<string, string>, slotAssignments: SlotAssignments): Promise<void> {
-    const stintIds = Object.values(slots).filter(Boolean);
-    if (stintIds.length === 0) return;
-
-    const stints = await this.prisma.playerStint.findMany({ where: { id: { in: stintIds }, sport: 'nba' } });
-    const stintById = new Map(stints.map((s) => [s.id, s]));
-
-    const seenPersonKeys = new Map<string, string>(); // personKey -> first slot that used it
-    for (const [position, stintId] of Object.entries(slots)) {
-      if (!stintId) continue;
-      const stint = stintById.get(stintId);
-      if (!stint) {
-        throw new BadRequestException(`One or more selected players are invalid.`);
-      }
-      const combo = slotAssignments[position];
-      if (!combo || stint.teamId !== combo.teamId || stint.era !== combo.era) {
-        throw new BadRequestException(`"${stint.name}" does not belong to slot "${position}"'s currently-assigned team+era.`);
-      }
-      if (position !== '6MAN' && !stint.eligiblePositions.includes(position)) {
-        throw new BadRequestException(`"${stint.name}" is not eligible for slot "${position}".`);
-      }
-      const existingSlot = seenPersonKeys.get(stint.personKey);
-      if (existingSlot && existingSlot !== position) {
-        throw new BadRequestException(`"${stint.name}" is already drafted in slot "${existingSlot}" — the same real person can't fill two slots.`);
-      }
-      seenPersonKeys.set(stint.personKey, position);
+    const slots = roster.slots as Record<string, string>;
+    const openPositions = NBA_POSITIONS.filter((p) => !slots[p]);
+    if (openPositions.length === 0) {
+      throw new BadRequestException('Your roster is already full.');
     }
+    const roundIndex = NBA_POSITIONS.length - openPositions.length;
+    const rollSequence = roster.rollSequence as unknown as RollSequence;
+    const combo = rollSequence[roundIndex];
+    if (!combo) {
+      throw new BadRequestException('The current round has no rolled team+era yet.');
+    }
+
+    const stint = await this.prisma.playerStint.findUnique({ where: { id: stintId } });
+    if (!stint || stint.sport !== 'nba') {
+      throw new BadRequestException('That player is not valid.');
+    }
+    if (stint.teamId !== combo.teamId || stint.era !== combo.era) {
+      throw new BadRequestException(`"${stint.name}" is not part of the current round's roster.`);
+    }
+
+    const personKeyToSlot = buildPersonKeyToSlot(await this.loadLockedPicks(slots));
+    if (isAlreadyDrafted(stint.personKey, personKeyToSlot)) {
+      throw new BadRequestException(`"${stint.name}" is already drafted onto your roster.`);
+    }
+
+    const eligibleOpen = openPositionsForPlayer(stint.eligiblePositions, openPositions);
+    if (eligibleOpen.length === 0) {
+      throw new BadRequestException(`"${stint.name}" has no eligible open position left on your roster.`);
+    }
+
+    let chosenPosition: string;
+    if (position !== undefined) {
+      if (!isNbaPosition(position) || !eligibleOpen.includes(position)) {
+        throw new BadRequestException(`"${stint.name}" cannot fill slot "${position}".`);
+      }
+      chosenPosition = position;
+    } else if (eligibleOpen.length === 1) {
+      chosenPosition = eligibleOpen[0];
+    } else {
+      return { status: 'choose_position', eligiblePositions: eligibleOpen };
+    }
+
+    await this.prisma.roster.update({
+      where: { id: roster.id },
+      data: { slots: { ...slots, [chosenPosition]: stintId } },
+    });
+
+    return { status: 'locked', match: await this.getMatchState(match.roomCode, user) };
   }
 
   /** Manual lock — requires a complete roster. Timer-expiry locks go through autoLockRoster instead. */
@@ -236,7 +248,7 @@ export class MatchesService {
       return this.getMatchState(match.roomCode, user);
     }
 
-    if (roster.draftDeadline.getTime() <= Date.now()) {
+    if (this.isExpired(roster)) {
       await this.autoLockRoster(roster);
     } else {
       const slots = roster.slots as Record<string, string>;
@@ -269,7 +281,7 @@ export class MatchesService {
 
     const gameResult = match.status === 'complete' ? await this.prisma.gameResult.findFirst({ where: { matchId: match.id }, orderBy: { gameNumber: 'desc' } }) : null;
 
-    const yourDraftPool = yourRoster && !yourRoster.isLocked ? await this.buildDraftPool(yourRoster, match) : null;
+    const yourCurrentRound = yourRoster && !yourRoster.isLocked ? await this.buildCurrentRound(yourRoster, match) : null;
 
     return {
       roomCode: match.roomCode,
@@ -285,7 +297,7 @@ export class MatchesService {
       sideB: toSideStatus(match.rosterB),
       yourSlots: yourRoster ? (yourRoster.slots as Record<string, string>) : null,
       opponentSlots: bothLocked && opponentRoster ? (opponentRoster.slots as Record<string, string>) : null,
-      yourDraftPool,
+      yourCurrentRound,
       yourTeamRespinUsed: yourRoster?.teamRespinUsed ?? null,
       yourEraRespinUsed: yourRoster?.eraRespinUsed ?? null,
       gameResult: gameResult ? toGameResultDto(gameResult) : null,
@@ -315,6 +327,10 @@ export class MatchesService {
   }
 
   // --- internals ---
+
+  private isExpired(roster: Roster): boolean {
+    return roster.draftDeadline !== null && roster.draftDeadline.getTime() <= Date.now();
+  }
 
   private async generateUniqueRoomCode(): Promise<string> {
     for (let attempt = 0; attempt < ROOM_CODE_GENERATION_ATTEMPTS; attempt++) {
@@ -354,7 +370,7 @@ export class MatchesService {
   private async applyLazyExpiry(match: MatchWithRosters): Promise<MatchWithRosters> {
     let changed = false;
     for (const roster of [match.rosterA, match.rosterB]) {
-      if (roster && !roster.isLocked && roster.draftDeadline.getTime() <= Date.now()) {
+      if (roster && !roster.isLocked && this.isExpired(roster)) {
         await this.autoLockRoster(roster);
         changed = true;
       }
@@ -370,39 +386,51 @@ export class MatchesService {
   }
 
   private async autoLockRoster(roster: Roster): Promise<void> {
-    const slotAssignments = roster.slotAssignments as unknown as SlotAssignments;
-    const currentSlots = roster.slots as Record<string, string>;
-    const [candidatesBySlot, usedPersonKeys] = await Promise.all([
-      this.loadRatedCandidatesBySlot(slotAssignments),
-      this.loadUsedPersonKeys(currentSlots),
+    const slots = roster.slots as Record<string, string>;
+    const openPositions = NBA_POSITIONS.filter((p) => !slots[p]);
+
+    if (openPositions.length === 0) {
+      await this.prisma.roster.update({ where: { id: roster.id }, data: { isLocked: true, lockedAt: new Date() } });
+      return;
+    }
+
+    // Fill remaining open slots from whatever rounds this roster hasn't
+    // played yet (spec section 4: "randomly/optimally filled remaining
+    // slots," reusing the same highest-rated-available fill logic as
+    // "Beat the AI") — already-played rounds are done and gone, so only
+    // the NOT-YET-ROLLED portion of the sequence is a fair source.
+    const rollSequence = roster.rollSequence as unknown as RollSequence;
+    const roundIndex = NBA_POSITIONS.length - openPositions.length;
+    const remainingCombos = rollSequence.slice(roundIndex);
+
+    const [candidatesByPosition, usedPersonKeys] = await Promise.all([
+      this.loadRatedCandidatesForOpenPositions(remainingCombos, openPositions),
+      this.loadUsedPersonKeys(slots),
     ]);
-    const filledSlots = autoFillRosterSlots(NBA_POSITIONS, currentSlots, candidatesBySlot, usedPersonKeys);
+    const filledSlots = autoFillRosterSlots(openPositions, slots, candidatesByPosition, usedPersonKeys);
     await this.prisma.roster.update({
       where: { id: roster.id },
       data: { slots: filledSlots, isLocked: true, lockedAt: new Date() },
     });
   }
 
-  /** Builds one rated-candidate list PER SLOT, scoped to that slot's assigned team+era combo and position eligibility (spec 4c/4f) — replaces the old sport-wide free-browse candidate pool. */
-  private async loadRatedCandidatesBySlot(slotAssignments: SlotAssignments): Promise<Record<string, RatedCandidate[]>> {
-    const combos = NBA_POSITIONS.map((pos) => slotAssignments[pos]).filter((c): c is TeamEraCombo => Boolean(c));
-    if (combos.length === 0) return {};
+  /** Rated candidates for each still-open position, drawn from the union of the roster's not-yet-played rounds (spec 4c/4f — 6MAN unfiltered by position, everything else eligibility-checked). */
+  private async loadRatedCandidatesForOpenPositions(combos: readonly TeamEraCombo[], openPositions: readonly string[]): Promise<Record<string, RatedCandidate[]>> {
+    if (combos.length === 0 || openPositions.length === 0) return {};
 
+    // Dedup — the same team+era can legitimately appear more than once
+    // across rounds (repeated rolls are allowed, spec 4c).
+    const uniqueCombos = [...new Map(combos.map((c) => [`${c.teamId}|${c.era}`, c])).values()];
     const stints = await this.prisma.playerStint.findMany({
-      where: { sport: 'nba', OR: combos.map((c) => ({ teamId: c.teamId, era: c.era as never })) },
+      where: { sport: 'nba', OR: uniqueCombos.map((c) => ({ teamId: c.teamId, era: c.era as never })) },
       include: { rating: true },
     });
 
     const result: Record<string, RatedCandidate[]> = {};
-    for (const position of NBA_POSITIONS) {
-      const combo = slotAssignments[position];
-      if (!combo) continue;
-      const comboStints = stints.filter((s) => s.teamId === combo.teamId && s.era === combo.era && s.rating !== null);
-      const eligible = filterEligibleForSlot(comboStints, position);
-      result[position] = eligible.map((s) => {
-        const stint = comboStints.find((cs) => cs.id === s.id)!;
-        return { id: stint.id, personKey: stint.personKey, baseRating: Number(stint.rating!.baseRating) };
-      });
+    for (const position of openPositions) {
+      result[position] = stints
+        .filter((s) => s.rating !== null && (position === '6MAN' || s.eligiblePositions.includes(position)))
+        .map((s) => ({ id: s.id, personKey: s.personKey, baseRating: Number(s.rating!.baseRating) }));
     }
     return result;
   }
@@ -412,6 +440,15 @@ export class MatchesService {
     if (stintIds.length === 0) return new Set();
     const stints = await this.prisma.playerStint.findMany({ where: { id: { in: stintIds } }, select: { personKey: true } });
     return new Set(stints.map((s) => s.personKey));
+  }
+
+  /** The already-LOCKED picks on a roster, as {slotPosition, personKey} pairs (spec 4c/4f grayout input) — looks up each locked stint id's personKey. */
+  private async loadLockedPicks(slots: Record<string, string>): Promise<{ slotPosition: string; personKey: string }[]> {
+    const entries = Object.entries(slots).filter((e): e is [string, string] => Boolean(e[1]));
+    if (entries.length === 0) return [];
+    const stints = await this.prisma.playerStint.findMany({ where: { id: { in: entries.map(([, id]) => id) } }, select: { id: true, personKey: true } });
+    const personKeyById = new Map(stints.map((s) => [s.id, s.personKey]));
+    return entries.map(([slotPosition, stintId]) => ({ slotPosition, personKey: personKeyById.get(stintId)! })).filter((e) => Boolean(e.personKey));
   }
 
   /** Called once a roster becomes locked (manually or via timer) — notifies the room, and runs the sim once both sides are in. */
@@ -516,7 +553,7 @@ export class MatchesService {
     }).filter((entry): entry is SlottedStint => Boolean(entry));
   }
 
-  /** Distinct (teamId, era) combos actually seeded, narrowed by the match's spec 4e era/team filters (empty = unrestricted). The single source of "what can a slot draw from" for both initial assignment and respins. */
+  /** Distinct (teamId, era) combos actually seeded, narrowed by the match's spec 4e era/team filters (empty = unrestricted). The single source of "what can a round draw from" for both the initial sequence and respins. */
   private async loadAvailableCombos(includedEras: string[], includedTeamIds: string[]): Promise<TeamEraCombo[]> {
     const stints = await this.prisma.playerStint.findMany({
       where: {
@@ -530,18 +567,19 @@ export class MatchesService {
     return stints.map((s) => ({ teamId: s.teamId, era: s.era }));
   }
 
-  private computeSlotAssignments(availableCombos: TeamEraCombo[]): SlotAssignments {
-    const assignments: SlotAssignments = {};
-    for (const position of NBA_POSITIONS) {
+  /** Draws the full sequence of rolls for one roster's draft (spec 4c) — one entry per round, repeats across rounds allowed (each round is an independent random draw). */
+  private computeRollSequence(availableCombos: TeamEraCombo[]): RollSequence {
+    const sequence: RollSequence = [];
+    for (let i = 0; i < NBA_POSITIONS.length; i++) {
       const combo = drawRandomCombo(availableCombos);
       if (!combo) {
         // Should be unreachable — assertFilterIsDraftable is always called
         // before this at match-creation/join time.
         throw new Error('No available team+era combos to draw from.');
       }
-      assignments[position] = combo;
+      sequence.push(combo);
     }
-    return assignments;
+    return sequence;
   }
 
   /** Blocks creating a match whose era/team narrowing (spec 4e) would leave some required position undraftable anywhere in the filtered pool. */
@@ -571,74 +609,67 @@ export class MatchesService {
     }
   }
 
-  /** Builds the requesting roster's per-slot offered team+era + player pool (spec 4c/4f), including grayout and respin availability. */
-  private async buildDraftPool(roster: Roster, match: Match): Promise<Record<string, SlotPoolDto>> {
-    const slotAssignments = roster.slotAssignments as unknown as SlotAssignments;
+  /** Builds the requesting roster's current round: the rolled team+era and its full, unfiltered player roster, with per-player eligible-open-position/grayout info and this round's respin availability (spec 4c/4f). Null once every slot is filled (nothing left to roll). */
+  private async buildCurrentRound(roster: Roster, match: Match): Promise<CurrentRoundDto | null> {
     const slots = roster.slots as Record<string, string>;
-    const availableCombos = await this.loadAvailableCombos(match.includedEras, match.includedTeamIds);
+    const openPositions = NBA_POSITIONS.filter((p) => !slots[p]);
+    if (openPositions.length === 0) return null;
 
-    const combos = NBA_POSITIONS.map((pos) => slotAssignments[pos]).filter((c): c is TeamEraCombo => Boolean(c));
-    const stints =
-      combos.length > 0
-        ? await this.prisma.playerStint.findMany({
-            where: { sport: 'nba', OR: combos.map((c) => ({ teamId: c.teamId, era: c.era as never })) },
-            include: { stats: true, rating: true, team: true },
-          })
-        : [];
+    const roundIndex = NBA_POSITIONS.length - openPositions.length;
+    const rollSequence = roster.rollSequence as unknown as RollSequence;
+    const combo = rollSequence[roundIndex];
+    if (!combo) return null;
 
-    const personKeyToSlot = buildPersonKeyToSlot(
-      NBA_POSITIONS.map((pos) => {
-        const stintId = slots[pos];
-        const stint = stintId ? stints.find((s) => s.id === stintId) : undefined;
-        return stint ? { slotPosition: pos, personKey: stint.personKey } : null;
-      }).filter((x): x is { slotPosition: NbaPosition; personKey: string } => Boolean(x)),
-    );
+    const [stints, availableCombos, lockedPicks] = await Promise.all([
+      this.prisma.playerStint.findMany({
+        where: { sport: 'nba', teamId: combo.teamId, era: combo.era as never },
+        include: { stats: true, rating: true, team: true },
+      }),
+      this.loadAvailableCombos(match.includedEras, match.includedTeamIds),
+      this.loadLockedPicks(slots),
+    ]);
 
-    const pool: Record<string, SlotPoolDto> = {};
-    for (const position of NBA_POSITIONS) {
-      const combo = slotAssignments[position];
-      if (!combo) continue;
+    const rated = stints.filter((s) => s.rating !== null);
+    const team = rated[0]?.team;
+    const personKeyToSlot = buildPersonKeyToSlot(lockedPicks);
 
-      const comboStints = stints.filter((s) => s.teamId === combo.teamId && s.era === combo.era && s.rating !== null);
-      const eligible = filterEligibleForSlot(comboStints, position).map((e) => comboStints.find((s) => s.id === e.id)!);
-      const team = comboStints[0]?.team;
+    const players: RoundPlayerDto[] = rated.map((s) => ({
+      id: s.id,
+      name: s.name,
+      eligiblePositions: s.eligiblePositions,
+      personKey: s.personKey,
+      stintStartYear: s.stintStartYear,
+      stintEndYear: s.stintEndYear,
+      isActive: s.isActive,
+      skinTone: s.skinTone,
+      baseRating: Number(s.rating!.baseRating),
+      offenseRating: Number(s.rating!.offenseRating),
+      defenseRating: Number(s.rating!.defenseRating),
+      clutchModifier: Number(s.rating!.clutchModifier),
+      stats: Object.fromEntries(s.stats.map((stat) => [stat.statKey, Number(stat.statValue)])),
+      estimatedStats: Object.fromEntries(
+        s.stats.filter((stat) => stat.estimateReason !== null).map((stat) => [stat.statKey, stat.estimateReason as 'pre_tracking_era' | 'hypothetical_pre_three_point']),
+      ),
+      eligibleOpenPositions: openPositionsForPlayer(s.eligiblePositions, openPositions),
+      isDuplicate: isAlreadyDrafted(s.personKey, personKeyToSlot),
+    }));
 
-      const players: DraftPoolPlayerDto[] = eligible.map((s) => ({
-        id: s.id,
-        name: s.name,
-        eligiblePositions: s.eligiblePositions,
-        personKey: s.personKey,
-        stintStartYear: s.stintStartYear,
-        stintEndYear: s.stintEndYear,
-        isActive: s.isActive,
-        skinTone: s.skinTone,
-        baseRating: Number(s.rating!.baseRating),
-        offenseRating: Number(s.rating!.offenseRating),
-        defenseRating: Number(s.rating!.defenseRating),
-        clutchModifier: Number(s.rating!.clutchModifier),
-        stats: Object.fromEntries(s.stats.map((stat) => [stat.statKey, Number(stat.statValue)])),
-        estimatedStats: Object.fromEntries(
-          s.stats.filter((stat) => stat.estimateReason !== null).map((stat) => [stat.statKey, stat.estimateReason as 'pre_tracking_era' | 'hypothetical_pre_three_point']),
-        ),
-        isDuplicate: isDuplicateInSlot(s.personKey, position, personKeyToSlot),
-      }));
-
-      pool[position] = {
-        teamId: combo.teamId,
-        teamName: team?.name ?? '',
-        teamColorHex: team?.colorHex ?? '',
-        era: combo.era,
-        players,
-        teamRespinAvailable: !roster.teamRespinUsed && hasTeamRespinAlternative(combo, availableCombos),
-        eraRespinAvailable: !roster.eraRespinUsed && hasEraRespinAlternative(combo, availableCombos),
-      };
-    }
-    return pool;
+    return {
+      roundIndex,
+      totalRounds: NBA_POSITIONS.length,
+      teamId: combo.teamId,
+      teamName: team?.name ?? '',
+      teamColorHex: team?.colorHex ?? '',
+      era: combo.era,
+      players,
+      teamRespinAvailable: !roster.teamRespinUsed && hasTeamRespinAlternative(combo, availableCombos),
+      eraRespinAvailable: !roster.eraRespinUsed && hasEraRespinAlternative(combo, availableCombos),
+    };
   }
 }
 
-function clampDraftTimer(seconds: number | undefined): number {
-  if (seconds === undefined || Number.isNaN(seconds)) return DEFAULT_DRAFT_TIMER_SECONDS;
+function clampDraftTimer(seconds: number): number {
+  if (Number.isNaN(seconds)) return MIN_DRAFT_TIMER_SECONDS;
   return Math.min(MAX_DRAFT_TIMER_SECONDS, Math.max(MIN_DRAFT_TIMER_SECONDS, Math.round(seconds)));
 }
 
@@ -651,20 +682,12 @@ function validateIncludedEras(eras: string[] | undefined): string[] {
   return [...new Set(eras)];
 }
 
-function validateSlots(slots: Record<string, string>): void {
-  for (const position of Object.keys(slots)) {
-    if (!isNbaPosition(position)) {
-      throw new BadRequestException(`"${position}" is not a valid NBA draft slot.`);
-    }
-  }
-}
-
 function toSideStatus(roster: (Roster & { user: User }) | null): SideStatusDto {
   if (!roster) return { joined: false, isLocked: false, draftDeadline: null, teamName: null };
   return {
     joined: true,
     isLocked: roster.isLocked,
-    draftDeadline: roster.draftDeadline.toISOString(),
+    draftDeadline: roster.draftDeadline ? roster.draftDeadline.toISOString() : null,
     teamName: `${roster.user.displayName}'s Team`,
   };
 }
@@ -678,7 +701,7 @@ function toCreateMatchResponse(match: MatchWithRosters, side: 'A' | 'B'): Create
     yourSide: side,
     rosterId: roster.id,
     draftTimerSeconds: match.draftTimerSeconds,
-    draftDeadline: roster.draftDeadline.toISOString(),
+    draftDeadline: roster.draftDeadline ? roster.draftDeadline.toISOString() : null,
   };
 }
 

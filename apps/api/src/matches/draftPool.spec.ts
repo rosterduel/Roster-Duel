@@ -1,53 +1,52 @@
-import { buildPersonKeyToSlot, filterEligibleForSlot, isDuplicateInSlot, PoolStint } from './draftPool';
+import { buildPersonKeyToSlot, isAlreadyDrafted, openPositionsForPlayer } from './draftPool';
 
-const STINTS: PoolStint[] = [
-  { id: 's1', personKey: 'mitchell', eligiblePositions: ['PG', 'SG'] },
-  { id: 's2', personKey: 'gobert', eligiblePositions: ['C'] },
-  { id: 's3', personKey: 'lebron', eligiblePositions: ['SF', 'PF', 'SG'] },
-];
+describe('openPositionsForPlayer', () => {
+  const OPEN = ['PG', 'SF', 'C', '6MAN'];
 
-describe('filterEligibleForSlot', () => {
-  it('only includes players eligible for the given real position', () => {
-    const pgPool = filterEligibleForSlot(STINTS, 'PG');
-    expect(pgPool.map((s) => s.personKey)).toEqual(['mitchell']);
+  it('returns the eligible positions that are still open, plus 6MAN (always offered when open)', () => {
+    expect(openPositionsForPlayer(['PG', 'SG'], OPEN)).toEqual(['PG', '6MAN']);
   });
 
-  it('excludes a center-only player from a guard slot', () => {
-    const pgPool = filterEligibleForSlot(STINTS, 'PG');
-    expect(pgPool.some((s) => s.personKey === 'gobert')).toBe(false);
+  it('excludes a center-only player from open guard slots but still offers 6MAN', () => {
+    expect(openPositionsForPlayer(['C'], OPEN)).toEqual(['C', '6MAN']);
   });
 
-  it('includes a multi-position player in every one of their eligible slots', () => {
-    expect(filterEligibleForSlot(STINTS, 'SF').map((s) => s.personKey)).toContain('lebron');
-    expect(filterEligibleForSlot(STINTS, 'PF').map((s) => s.personKey)).toContain('lebron');
-    expect(filterEligibleForSlot(STINTS, 'SG').map((s) => s.personKey)).toContain('lebron');
+  it('returns every open eligible position for a multi-position player, plus 6MAN', () => {
+    expect(openPositionsForPlayer(['SF', 'PF', 'SG'], OPEN)).toEqual(['SF', '6MAN']);
   });
 
-  it('6MAN is unfiltered — every player from the combo is eligible regardless of position (spec 4f)', () => {
-    const sixManPool = filterEligibleForSlot(STINTS, '6MAN');
-    expect(sixManPool).toHaveLength(3);
+  it('6th Man is a flex — always offered when open, regardless of eligiblePositions (spec 4f)', () => {
+    expect(openPositionsForPlayer(['SG'], OPEN)).toEqual(['6MAN']);
+  });
+
+  it('returns empty when the player has no eligible open position and 6MAN is not open', () => {
+    expect(openPositionsForPlayer(['SG'], ['PG', 'SF', 'C'])).toEqual([]);
+  });
+
+  it('returns empty when there are no open positions at all', () => {
+    expect(openPositionsForPlayer(['PG', 'SG'], [])).toEqual([]);
   });
 });
 
-describe('buildPersonKeyToSlot + isDuplicateInSlot', () => {
+describe('buildPersonKeyToSlot + isAlreadyDrafted', () => {
   it('is not a duplicate when the person has not been picked anywhere yet', () => {
     const map = buildPersonKeyToSlot([]);
-    expect(isDuplicateInSlot('lebron', 'SF', map)).toBe(false);
+    expect(isAlreadyDrafted('lebron', map)).toBe(false);
   });
 
-  it('is not a duplicate in the exact slot they were picked into (that is just "selected")', () => {
+  it('is a duplicate once locked into any slot', () => {
     const map = buildPersonKeyToSlot([{ slotPosition: 'SF', personKey: 'lebron' }]);
-    expect(isDuplicateInSlot('lebron', 'SF', map)).toBe(false);
-  });
-
-  it('is a duplicate when shown in a DIFFERENT slot than where they were picked', () => {
-    const map = buildPersonKeyToSlot([{ slotPosition: 'SF', personKey: 'lebron' }]);
-    expect(isDuplicateInSlot('lebron', 'PF', map)).toBe(true);
+    expect(isAlreadyDrafted('lebron', map)).toBe(true);
   });
 
   it('applies across different stints of the same real person, not just the same stint', () => {
-    // LeBron picked via his Cleveland stint into SF; his Miami stint (different id, same personKey) shows up in PF's pool.
+    // LeBron picked via his Cleveland stint into SF; his Miami stint (different id, same personKey) must show as a duplicate in any later round.
     const map = buildPersonKeyToSlot([{ slotPosition: 'SF', personKey: 'lebron_james' }]);
-    expect(isDuplicateInSlot('lebron_james', 'PF', map)).toBe(true);
+    expect(isAlreadyDrafted('lebron_james', map)).toBe(true);
+  });
+
+  it('does not flag an unrelated person as a duplicate', () => {
+    const map = buildPersonKeyToSlot([{ slotPosition: 'SF', personKey: 'lebron_james' }]);
+    expect(isAlreadyDrafted('kobe_bryant', map)).toBe(false);
   });
 });

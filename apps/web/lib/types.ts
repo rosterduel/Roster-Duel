@@ -49,8 +49,8 @@ export interface PlayerSummary {
   estimatedStats: Record<string, StatEstimateReason>;
 }
 
-/** A single player entry within a slot's draft pool (spec 4c/4f). */
-export interface DraftPoolPlayer {
+/** A single player entry within the current round's full, unfiltered roster (spec 4c/4f). */
+export interface RoundPlayer {
   id: string;
   name: string;
   eligiblePositions: NbaPosition[];
@@ -65,20 +65,27 @@ export interface DraftPoolPlayer {
   clutchModifier: number;
   stats: Record<string, number>;
   estimatedStats: Record<string, StatEstimateReason>;
-  /** Already picked into a different slot on this roster — grayed out, unselectable (spec 4c/4f). */
+  /** Which currently-open slots this player could actually be drafted into right now (spec 4c step 4) — empty means no open slot fits them. */
+  eligibleOpenPositions: NbaPosition[];
+  /** Already locked into a slot on this roster — grayed out, unselectable, regardless of eligibleOpenPositions (spec 4c/4f). */
   isDuplicate: boolean;
 }
 
-/** The offered team+era combo and its player pool for one draft slot. */
-export interface SlotPool {
+/** The current round's rolled team+era and its full, unfiltered player roster (spec 4c's sequential redesign). */
+export interface CurrentRound {
+  roundIndex: number;
+  totalRounds: number;
   teamId: string;
   teamName: string;
   teamColorHex: string;
   era: string;
-  players: DraftPoolPlayer[];
+  players: RoundPlayer[];
   teamRespinAvailable: boolean;
   eraRespinAvailable: boolean;
 }
+
+/** Response from POST roster/:rosterId/pick — either the pick locked immediately, or it's ambiguous and the caller must resubmit with a chosen position (the "Choose Position" prompt). */
+export type PickResult = { status: 'locked'; match: MatchState } | { status: 'choose_position'; eligiblePositions: NbaPosition[] };
 
 export interface Team {
   id: string;
@@ -112,8 +119,9 @@ export interface CreateMatchResponse {
   matchId: string;
   yourSide: 'A' | 'B';
   rosterId: string;
-  draftTimerSeconds: number;
-  draftDeadline: string;
+  /** Null = no draft timer (spec section 4's default). */
+  draftTimerSeconds: number | null;
+  draftDeadline: string | null;
 }
 
 export interface SideStatus {
@@ -196,7 +204,8 @@ export interface MatchState {
   roomCode: string;
   sport: 'nba';
   status: 'drafting' | 'simulating' | 'complete' | string;
-  draftTimerSeconds: number;
+  /** Null = no draft timer (spec section 4's default). */
+  draftTimerSeconds: number | null;
   rolesMode: RolesMode;
   includedEras: string[];
   includedTeamIds: string[];
@@ -206,8 +215,8 @@ export interface MatchState {
   sideB: SideStatus;
   yourSlots: Record<string, string> | null;
   opponentSlots: Record<string, string> | null;
-  /** Your own roster's per-slot offered team+era + player pool (spec 4c/4f). Null once locked or you're not a participant. */
-  yourDraftPool: Record<string, SlotPool> | null;
+  /** Your own roster's current round — the rolled team+era and its full, unfiltered roster (spec 4c). Null once locked, once every slot is filled (ready to lock), or you're not a participant. */
+  yourCurrentRound: CurrentRound | null;
   yourTeamRespinUsed: boolean | null;
   yourEraRespinUsed: boolean | null;
   gameResult: GameResult | null;

@@ -46,8 +46,8 @@ apps/
       sim/                Adapter: Prisma player rows -> sim-engine TeamInput
       recap/               LLM-generated post-game recap (spec section 4b)
       session/             Anonymous session guard (spec: "no auth")
-      players/             GET /players — legacy free-browse pool, interim/
-                            superseded by matches' yourDraftPool (spec 4c)
+      players/             GET /players — legacy free-browse pool, dead
+                            code, superseded by matches' yourCurrentRound (spec 4c)
       matches/              Match/roster lifecycle, draft timer + auto-fill,
                              team+era slot assignment + dual respins +
                              grayout (spec 4c/4d/4e/4f), WebSocket gateway
@@ -400,9 +400,9 @@ piecemeal) around it:
 still returns every stint across all teams/eras undifferentiated — the
 old "free browse" shape, just repointed from `Player` to `PlayerStint`.
 The real team+era-constrained draft pool is what the frontend actually
-uses (see "Draft flow & matchmaking" below): `DraftBoard.tsx` is built
-entirely on `GET /matches/:roomCode`'s `yourDraftPool`, and no frontend
-code calls `GET /players` anymore.
+uses (see "Team + era draft pool: sequential rolls" below): `DraftBoard.tsx`
+is built entirely on `GET /matches/:roomCode`'s `yourCurrentRound`, and
+no frontend code calls `GET /players` anymore.
 
 Verify the new model end-to-end (real seeded Postgres data → Prisma →
 `toTeamInput` adapter → `simulateGame`, including the LeBron cross-stint
@@ -497,10 +497,59 @@ Full reasoning is in the schema file's header comment; summary:
   `max-height`-driven collapse/expand on a region below an always-visible
   masthead, so body text is revealed rather than squashed by scaling).
 
-## Team + era draft pool (spec sections 4c/4d/4e/4f)
+## Team + era draft pool: sequential rolls (spec sections 4c/4d/4e/4f)
 
 The real team+era-constrained draft flow that the Step 2 rebuild's data
 model was built to support — backend and frontend both, end to end.
+
+**This supersedes an earlier, already-built-and-verified revision of this
+section** that assigned all 6 slots their own separate team+era combo
+simultaneously (shown as 6 parallel position tabs, each with its own
+filtered pool). Reviewing real screenshots of that version running made
+clear it didn't match the intended design — confirmed against a screen
+recording of [82-0.com](https://82-0.com), the reference implementation
+this app's draft concept is modeled on. The design below is sequential —
+**one roll at a time, not six at once** — and is what actually shipped.
+Nothing in "Team + era data model" above changed; only how a roster gets
+assembled from that data changed.
+
+### Sequential rolls, not parallel slots (spec 4c)
+
+Each round of the draft rolls exactly ONE random team+era combo
+(`drawRandomCombo()` in `slotAssignment.ts`, unchanged from before) and
+reveals its **full, unfiltered roster** — every position at once, not
+narrowed to any particular slot. The user taps a player to draft them:
+
+- Eligible for exactly one currently-open position → auto-assigned there.
+- Eligible for more than one currently-open position → the client is
+  handed back the open options and prompts the user to choose (the
+  "Choose Position" flow — see `PickResultDto` below).
+- Once locked in, that pick is **permanent** — no reassigning or
+  rerolling a filled slot later.
+
+The next round's roll happens automatically once a pick locks in, and
+repeats until all 6 slots are filled. A roster's `rollSequence` (renamed
+from `slotAssignments`) is a flat **array** of 6 combos, not a
+position-keyed map — a round's roll isn't "for" any slot ahead of time.
+It's still precomputed once at roster-creation time (round count is fixed
+regardless of which slot each roll ends up filling), so `same_roles`
+matches can still share an identical sequence (`Match.sharedRollSequence`).
+The current round is always `rollSequence[filledSlotCount]` — the number
+of already-locked picks doubles as the round index, so no separate
+counter is needed.
+
+Players whose eligible positions are all already filled stay **visible,
+not hidden** — grayed out with a "No slot open" label (useful context,
+per spec: "oh, so-and-so was on this team too"), distinct from "Already
+picked" (a personKey duplicate — see below). `openPositionsForPlayer()`
+(`draftPool.ts`) computes this at **pick time**, not roll time — the
+inverse of the superseded version, which pre-filtered each slot's pool
+before the roll was even shown.
+
+No dead-end handling exists for pool sparseness (confirmed a non-issue
+per spec: "each roll draws from a full decade's worth of a team's
+players... there is effectively always at least one eligible player for
+some open position") — this is a deliberate scope line, not an oversight.
 
 ### Position eligibility (spec 4f)
 
@@ -531,125 +580,146 @@ how the data was authored (every player's original single position is
 preserved as a member of their new array), but verified rather than just
 asserted. Currently 0 gaps across all 14 combos.
 
-### Random per-slot assignment + eligibility-filtered pools (spec 4c/4f)
-
-Each of a roster's 6 slots gets its own randomly-assigned team+era combo
-(`Roster.slotAssignments`, drawn once per roster at creation time — see
-"Same roles vs. independent roles" below for how the two rosters in a
-match relate to each other). The player pool for a slot is that combo's
-roster **filtered to players eligible for that slot's position**
-(`filterEligibleForSlot()` in `draftPool.ts`) — e.g. a PG slot that draws
-"2020s Jazz" shows Donovan Mitchell-type players but not a center-only
-big, even though both played there. **6th Man is unfiltered** — every
-player from the drawn combo is eligible, regardless of
-`eligiblePositions` (spec 4f's flex rule).
-
-Pool data (team, era, players, respin availability) is served as part of
-`GET /matches/:roomCode`'s `yourDraftPool` — one entry per slot, own
-roster only (blind draft). Stats shown are the stint-scoped numbers
-already built in Step 2, not career aggregates — confirmed via the
-`assertSlotPicksAreValid()` validation path and the live end-to-end
-smoke test (see "Verifying this" below), not just at the API layer.
-
-### Respin mechanic (spec 4c) — two fully independent, roster-wide resources
+### Respin mechanic (spec 4c) — two independent, whole-draft resources
 
 A roster gets exactly one Team respin and one Era respin, each usable on
-**any one slot**, and each entirely independent of the other — using the
-Team respin doesn't touch the Era respin's availability or vice versa.
-Once used (`Roster.teamRespinUsed` / `eraRespinUsed`), that respin type
-is unavailable on every slot for the rest of the draft. Respinning a
-slot that already had a pick clears that pick (the old combo's pool no
-longer applies). `drawTeamRespinCombo()`/`drawEraRespinCombo()`
-(`slotAssignment.ts`) keep the other axis fixed (Team respin: same era,
-new team; Era respin: same team, new era) and never redraw the exact
-current value.
+**any round, at any point before that round's pick locks in** — including
+the very first round or the very last. Once used
+(`Roster.teamRespinUsed` / `eraRespinUsed`), that respin type is
+unavailable for every remaining round. `drawTeamRespinCombo()` /
+`drawEraRespinCombo()` (`slotAssignment.ts` — this file's logic didn't
+need to change at all for the sequential redesign, since it already
+operated on "a combo," not "a slot") keep the other axis fixed (Team
+respin: same era, new team; Era respin: same team, new era) and never
+redraw the exact current value. A respin mutates only
+`rollSequence[currentRoundIndex]` — the not-yet-picked round — nothing
+about already-locked picks is touched.
 
-**Dead ends are real with the current 14-combo seed pool, not
-hypothetical**: most teams have only one seeded era, and most eras have
-only one seeded team (e.g. "New York + seventies" has no alternative
-team *or* era to respin into — both dead-end on that exact slot). Rather
-than expand the seed data or silently no-op, a dead-ended respin is
-**disabled without consuming the resource** — `SlotPoolDto.teamRespinAvailable`
-/ `eraRespinAvailable` reflect this per-slot (`hasTeamRespinAlternative()`
-/ `hasEraRespinAlternative()`), and the server independently re-validates
-on the actual respin request (a client can't force a dead-end respin
-through). Verified live: attempting a dead-end respin returns a 400
-without touching the roster's resource, which stays fully usable on a
-different slot.
-
-A second, narrower dead-end (spec 4f) — a drawn combo with real players,
-but literally none eligible for this specific slot's position — is
-structurally impossible with the current seed data (see "Position
-eligibility" above's coverage guarantee), so there was nothing to
-observe/flag back per the spec's request for that case.
+**Combo-availability dead ends are still real** (distinct from the
+pool-sparseness dead end above, which is fully resolved): most teams have
+only one seeded era and vice versa (e.g. "Boston + sixties" has no
+alternative team to respin into), so a respin can still have nothing to
+switch to. `CurrentRoundDto.teamRespinAvailable` / `eraRespinAvailable`
+reflect this for the active round, and the server independently
+re-validates on the actual respin request. Verified live: a dead-ended
+respin returns a 400 without consuming the resource.
 
 ### No-duplicate-player grayout (spec 4c/4f)
 
-`buildPersonKeyToSlot()` + `isDuplicateInSlot()` (`draftPool.ts`) key
-duplicate detection on `personKey`, not stint id or position — a real
-person already picked into any slot shows up grayed out
-(`DraftPoolPlayerDto.isDuplicate`) everywhere else they'd otherwise be
-pickable, whether that's a **different stint** of the same person (e.g.
-LeBron via a different team+era) or a **different eligible position of
-the same stint** landing in a different slot's pool. This is per-roster
-only — the opposing roster's picks never affect this. Enforced
-server-side in three places, not just the display flag: `saveDraftSlots`
-(`assertSlotPicksAreValid`), the timer-expiry auto-fill path
-(`autoFillRosterSlots` now takes a `usedPersonKeys` set), and implicitly
-by the pool itself only ever offering real, currently-valid picks.
+`buildPersonKeyToSlot()` + `isAlreadyDrafted()` (`draftPool.ts`) key
+duplicate detection on `personKey`, not stint id — a real person already
+locked into any slot shows up grayed out ("Already picked",
+`RoundPlayerDto.isDuplicate`) in every later round's roster where they'd
+otherwise appear, whether that's a **different stint** of the same person
+(e.g. Karl Malone via a different team+era) or the same stint reappearing
+because a later round happened to roll the same team+era again (repeated
+rolls across rounds are allowed — spec 4c is explicit that a random draw
+can land on the same combo twice). This is per-roster only. Enforced
+server-side, not just the display flag: `pickPlayer()` re-checks
+`isAlreadyDrafted` before locking a pick, the timer-expiry auto-fill path
+(`autoFillRosterSlots`) takes a `usedPersonKeys` set, and the pool itself
+only ever offers real, currently-valid picks.
 
-### Same roles vs. independent roles + era/team narrowing (spec 4e)
+This is a genuinely different grayout reason from **"No slot open"**
+(`eligibleOpenPositions.length === 0` and not a duplicate) — a player who
+simply has no real position left to fill, distinguished with its own
+label in `PlayerCard.tsx` rather than collapsing both into one generic
+"unavailable" state. Both were verified live occurring naturally in the
+same draft (see "Frontend" below).
+
+### Same roles vs. independent roles + era/team narrowing (spec 4e) — unaffected by the sequential redesign
 
 `POST /matches` accepts `rolesMode` (`same_roles` | `independent_roles`,
 default `independent_roles`), `includedEras`, and `includedTeamIds`.
-**`same_roles`**: the *initial* team+era sequence is computed once at
-match-creation time and stored on `Match.sharedSlotAssignments`; both
-rosters copy it verbatim rather than each independently drawing their
-own (verified live: both sides' pools match on all 6 slots at creation).
+**`same_roles`**: the full 6-round sequence is computed once at
+match-creation time and stored on `Match.sharedRollSequence` (renamed
+from `sharedSlotAssignments`, same reshape as `Roster.rollSequence`);
+both rosters copy it verbatim rather than each independently drawing
+their own (verified live: both sides' round 0 rolls match at creation).
 Respins still diverge a roster from that shared baseline afterward —
-private and forward-only, exactly the design decision confirmed earlier
-in this project's planning. **`independent_roles`**: each roster draws
-its own sequence from the start. Era/team narrowing filters the combos
-either mode draws from; `assertFilterIsDraftable()` rejects match
-creation up front if the filtered pool can't fill all 5 real positions
-(not just "has any players at all") — verified live with both an
-accepted narrow-but-valid filter (era-only: sixties) and a rejected
+private and forward-only, unchanged from the earlier design.
+**`independent_roles`**: each roster draws its own sequence from the
+start. Era/team narrowing filters the combos either mode draws from;
+`assertFilterIsDraftable()` still rejects match creation up front if the
+filtered pool can't fill all 5 real positions — verified live with both
+an accepted narrow-but-valid filter (era-only: sixties) and a rejected
 invalid one (nonexistent team id).
 
 ### Async independence (spec 4d) — unaffected
 
-Nothing above requires both users online together. Slot assignment
-happens at roster creation/join time (independent per user under
+Nothing above requires both users online together. The roll sequence is
+computed at roster creation/join time (independent per user under
 `independent_roles`; copied once under `same_roles`, not re-synced
-live), respins are a normal authenticated POST against your own roster,
-and the existing draft-timer/lazy-expiry/WebSocket-with-polling-fallback
-mechanics (see "Draft flow & matchmaking" above) are untouched.
+live), each pick and respin is a normal authenticated POST against your
+own roster, and the existing draft-timer/lazy-expiry/WebSocket-with-
+polling-fallback mechanics (see "Draft flow & matchmaking" above) are
+untouched in mechanism — only the timer's *default* changed (see below).
+
+### Draft timer now defaults to off (spec section 4)
+
+`Match.draftTimerSeconds` / `Roster.draftDeadline` are now nullable —
+null means no timer, and that's the new default (an untimed draft is the
+default experience). The match creator can still opt into a timer at
+creation time (a checkbox reveals the duration dropdown on the home
+page); once opted in, the existing timer/lazy-expiry/auto-lock mechanics
+are unchanged. The timer-expiry auto-fill path
+(`MatchesService.autoLockRoster`) got a genuine rework beyond the
+nullability change: it used to fill each open slot from that slot's own
+precomputed combo; now, since a slot no longer has one specific combo
+tied to it, it fills remaining open positions from the union of the
+roster's **not-yet-played rounds** (`rollSequence.slice(roundIndex)`) —
+already-played rounds are done and gone. Verified live with a real
+60-second-timer match: one manual pick survived the timer expiring, and
+the other 5 positions were auto-filled with valid, non-duplicate,
+eligible players.
+
+### Real team colors (spec 4c)
+
+`seedData/teams.ts` now uses each team's real, recognizable primary
+color instead of arbitrary-but-distinct ones (the earlier version's
+"Miami as blue-green" was exactly the kind of thing this fixes). The
+spec's own color table assigns the same literal color family to more
+than one team in this 12-team set — four teams are nominally "red"
+(Chicago/Detroit/Miami/Philadelphia) and two are nominally "purple" (Los
+Angeles/Utah) — so per the spec's own instruction to shift a shade
+rather than leave two teams near-identical, Detroit/Miami/Philadelphia
+each got a genuinely distinct hue within the red family, and Utah was
+set to navy specifically to avoid clashing with LA's purple. Both
+adjustments are flagged in the seed file's comments, not silently made.
 
 ### Frontend (spec 4c/4e)
 
-`DraftBoard.tsx` is built entirely on `yourDraftPool` — six position
-tabs (team-color dot + team/era label, or the picked player's name once
-filled), an active-slot header with both respin buttons (each showing a
-`(1)`/`(0)` remaining-use counter, disabled without being consumed on a
-detected dead end), a sort dropdown defaulting to PPG with "Rating" and
-the position's other stat fields as alternatives, and `PlayerCard`
-rendering each pool entry with stint-scoped stats — visibly dimmed and
-disabled ("Already picked") when `isDuplicate` is set. A brand-new
-`GET /teams` endpoint (`apps/api/src/teams/`) backs the home page's
-match-creation settings screen — rolesMode radio buttons and a
-collapsible era/team narrowing picker (pill buttons, selection count in
-the toggle label) — inserted before match creation, so the invite link
-is only generated once settings are chosen.
+`DraftBoard.tsx` is a single-round view, not six parallel tabs: a
+reveal header (team-color dot, team/era, a brief CSS pop-in animation
+keyed on round index — spec 4c's "brief spin/reveal animation," kept
+deliberately cheap rather than a real spinner), two respin buttons for
+the current round only (`(1)`/`(0)` counters), the round's full
+unfiltered roster sorted PPG-by-default via `PlayerCard`, and a
+"Choose Position" modal that appears when a tap is ambiguous (mirrors
+the spec's own worked example almost verbatim — "Kareem Abdul-Jabbar —
+Choose Position," Center or 6th Man). A read-only 6-position progress
+strip above the reveal shows locked-in picks so far (best-effort,
+session-local player names — spec doesn't require persisting these
+across a reload, only the underlying pick itself, which the server does
+persist). `PlayerCard.tsx` now derives its stat line from each player's
+own canonical position (`eligiblePositions[0]`) rather than an
+externally-passed slot, and distinguishes two grayout reasons with
+different labels: "Already picked" (`isDuplicate`) vs. "No slot open"
+(`eligibleOpenPositions` empty). The home page's match-creation settings
+screen (rolesMode radio buttons, collapsible era/team narrowing picker,
+`GET /teams`-backed) is unchanged from the earlier round except for the
+new draft-timer checkbox.
 
 Verified live in the browser (Playwright), not just typecheck/unit
-tests: the settings screen (default state and with `same_roles` +
-narrowing selections applied), a naturally-occurring cross-slot
-duplicate case driven end-to-end (a `personKey` landing in two slots'
-pools, confirmed grayed out and unpickable in the second), and a fresh
-match's team respin (button enabled pre-use, pool and team label
-updating in place after the click, counter flipping to `(0)`, era
-respin left untouched at `(1)`) with the sort dropdown re-applied
-correctly by rating.
+tests: the home page with the timer checkbox unchecked by default and
+its duration dropdown appearing once checked; a full 6-round draft
+played end to end with real screenshots at each stage; the "Choose
+Position" modal triggered by an actual ambiguous multi-position player;
+both grayout reasons ("Already picked" and "No slot open") occurring
+naturally in the same draft, not staged; a team respin changing the
+team while the era stayed fixed, with the counter flipping to `(0)`;
+and the real team colors (Boston green, Los Angeles purple, Cleveland
+wine, etc.) rendering correctly throughout.
 
 ### Verifying this
 

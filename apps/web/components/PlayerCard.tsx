@@ -1,7 +1,7 @@
 'use client';
 
 import { ESTIMATE_TOOLTIPS, formatStatValue, POSITION_STAT_FIELDS } from '../lib/positions';
-import { DraftPoolPlayer, NbaPosition } from '../lib/types';
+import { NbaPosition, RoundPlayer } from '../lib/types';
 
 function RatingBar({ label, value }: { label: string; value: number }) {
   return (
@@ -17,30 +17,34 @@ function RatingBar({ label, value }: { label: string; value: number }) {
 
 export function PlayerCard({
   player,
-  slotPosition,
   onSelect,
-  selected,
   disabled,
 }: {
-  player: DraftPoolPlayer;
-  /** Which slot's pool this card is being shown in — drives which stat line to show (spec section 8) even for a multi-eligible player. */
-  slotPosition: NbaPosition;
-  onSelect?: (player: DraftPoolPlayer) => void;
-  selected?: boolean;
+  player: RoundPlayer;
+  onSelect?: (player: RoundPlayer) => void;
   disabled?: boolean;
 }) {
-  const fields = POSITION_STAT_FIELDS[slotPosition] ?? [];
+  // No single "active slot" drives the stat line anymore (spec 4c's
+  // sequential redesign shows the full, unfiltered roster) — each card
+  // shows the stat line for the player's OWN canonical position instead
+  // (eligiblePositions[0], same convention used for rating peer-grouping).
+  const canonicalPosition: NbaPosition = player.eligiblePositions[0] ?? 'PG';
+  const fields = POSITION_STAT_FIELDS[canonicalPosition] ?? [];
   const era = player.isActive ? `${player.stintStartYear}–present` : `${player.stintStartYear}–${player.stintEndYear}`;
-  const grayedOut = player.isDuplicate;
+
+  const hasNoOpenSlot = !player.isDuplicate && player.eligibleOpenPositions.length === 0;
+  const grayedOut = player.isDuplicate || hasNoOpenSlot;
   const isDisabled = disabled || grayedOut;
 
+  const buttonLabel = player.isDuplicate ? 'Already picked' : hasNoOpenSlot ? 'No slot open' : 'Draft';
+  const cardTitle = player.isDuplicate
+    ? 'Already drafted onto your roster'
+    : hasNoOpenSlot
+      ? 'No open position on your roster fits this player'
+      : undefined;
+
   return (
-    <div
-      className={`rounded-lg border p-3 transition ${
-        selected ? 'border-orange-500 bg-orange-50' : 'border-gray-200 bg-white'
-      } ${grayedOut ? 'opacity-40 grayscale' : disabled ? 'opacity-50' : ''}`}
-      title={grayedOut ? 'Already drafted elsewhere on your roster' : undefined}
-    >
+    <div className={`rounded-lg border border-gray-200 bg-white p-3 transition ${grayedOut ? 'opacity-40 grayscale' : disabled ? 'opacity-50' : ''}`} title={cardTitle}>
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="font-semibold">{player.name}</div>
@@ -56,7 +60,7 @@ export function PlayerCard({
             onClick={() => onSelect(player)}
             className="shrink-0 rounded bg-orange-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
-            {grayedOut ? 'Already picked' : selected ? 'Selected' : 'Draft'}
+            {buttonLabel}
           </button>
         )}
       </div>

@@ -1,5 +1,5 @@
 import { getSessionToken } from './session';
-import { CreateMatchRequest, CreateMatchResponse, GameResult, LeaderboardEntry, MatchState, PlayerSummary, PublicUser, Team, UserRecord } from './types';
+import { CreateMatchRequest, CreateMatchResponse, GameResult, LeaderboardEntry, MatchState, PickResult, PlayerSummary, PublicUser, Team, UserRecord } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
@@ -42,11 +42,12 @@ export const api = {
 
   getMatchState: (roomCode: string) => request<MatchState>(`/matches/${roomCode}`),
 
-  saveDraftSlots: (rosterId: string, slots: Record<string, string>) =>
-    request<{ ok: true }>(`/matches/roster/${rosterId}/slots`, { method: 'POST', body: JSON.stringify({ slots }) }),
+  /** Locks in a pick for the current round (spec 4c step 4). Omit `position` unless resubmitting after a `choose_position` response. */
+  pickPlayer: (rosterId: string, stintId: string, position?: string) =>
+    request<PickResult>(`/matches/roster/${rosterId}/pick`, { method: 'POST', body: JSON.stringify({ stintId, position }) }),
 
-  respinSlot: (rosterId: string, position: string, type: 'team' | 'era') =>
-    request<MatchState>(`/matches/roster/${rosterId}/respin`, { method: 'POST', body: JSON.stringify({ position, type }) }),
+  respinCurrentRound: (rosterId: string, type: 'team' | 'era') =>
+    request<MatchState>(`/matches/roster/${rosterId}/respin`, { method: 'POST', body: JSON.stringify({ type }) }),
 
   lockRoster: (rosterId: string) => request<MatchState>(`/matches/roster/${rosterId}/lock`, { method: 'POST' }),
 
