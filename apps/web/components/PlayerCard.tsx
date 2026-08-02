@@ -1,7 +1,7 @@
 'use client';
 
 import { ESTIMATE_TOOLTIPS, formatStatValue, POSITION_STAT_FIELDS } from '../lib/positions';
-import { NbaPosition, PlayerSummary } from '../lib/types';
+import { DraftPoolPlayer, NbaPosition } from '../lib/types';
 
 function RatingBar({ label, value }: { label: string; value: number }) {
   return (
@@ -17,40 +17,46 @@ function RatingBar({ label, value }: { label: string; value: number }) {
 
 export function PlayerCard({
   player,
+  slotPosition,
   onSelect,
   selected,
   disabled,
 }: {
-  player: PlayerSummary;
-  onSelect?: (player: PlayerSummary) => void;
+  player: DraftPoolPlayer;
+  /** Which slot's pool this card is being shown in — drives which stat line to show (spec section 8) even for a multi-eligible player. */
+  slotPosition: NbaPosition;
+  onSelect?: (player: DraftPoolPlayer) => void;
   selected?: boolean;
   disabled?: boolean;
 }) {
-  const fields = POSITION_STAT_FIELDS[player.position as NbaPosition] ?? [];
+  const fields = POSITION_STAT_FIELDS[slotPosition] ?? [];
   const era = player.isActive ? `${player.stintStartYear}–present` : `${player.stintStartYear}–${player.stintEndYear}`;
+  const grayedOut = player.isDuplicate;
+  const isDisabled = disabled || grayedOut;
 
   return (
     <div
       className={`rounded-lg border p-3 transition ${
         selected ? 'border-orange-500 bg-orange-50' : 'border-gray-200 bg-white'
-      } ${disabled ? 'opacity-50' : ''}`}
+      } ${grayedOut ? 'opacity-40 grayscale' : disabled ? 'opacity-50' : ''}`}
+      title={grayedOut ? 'Already drafted elsewhere on your roster' : undefined}
     >
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="font-semibold">{player.name}</div>
           <div className="text-xs text-gray-500">
-            {player.position} · {era}
+            {player.eligiblePositions.join('/')} · {era}
           </div>
         </div>
         {onSelect && (
           <button
             type="button"
             data-testid={`draft-player-${player.id}`}
-            disabled={disabled}
+            disabled={isDisabled}
             onClick={() => onSelect(player)}
             className="shrink-0 rounded bg-orange-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
-            {selected ? 'Selected' : 'Draft'}
+            {grayedOut ? 'Already picked' : selected ? 'Selected' : 'Draft'}
           </button>
         )}
       </div>

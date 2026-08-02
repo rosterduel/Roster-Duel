@@ -1,5 +1,5 @@
 import { getSessionToken } from './session';
-import { CreateMatchResponse, GameResult, LeaderboardEntry, MatchState, PlayerSummary, PublicUser, UserRecord } from './types';
+import { CreateMatchRequest, CreateMatchResponse, GameResult, LeaderboardEntry, MatchState, PlayerSummary, PublicUser, Team, UserRecord } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
@@ -31,10 +31,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  /** Legacy free-browse pool — interim/superseded by the per-slot draft pool embedded in match state (spec 4c). Kept only for backward compatibility. */
   getPlayers: (sport = 'nba') => request<PlayerSummary[]>(`/players?sport=${sport}`),
 
-  createMatch: (draftTimerSeconds?: number) =>
-    request<CreateMatchResponse>('/matches', { method: 'POST', body: JSON.stringify({ draftTimerSeconds }) }),
+  getTeams: (sport = 'nba') => request<Team[]>(`/teams?sport=${sport}`),
+
+  createMatch: (options: CreateMatchRequest) => request<CreateMatchResponse>('/matches', { method: 'POST', body: JSON.stringify(options) }),
 
   joinMatch: (roomCode: string) => request<CreateMatchResponse>(`/matches/${roomCode}/join`, { method: 'POST' }),
 
@@ -42,6 +44,9 @@ export const api = {
 
   saveDraftSlots: (rosterId: string, slots: Record<string, string>) =>
     request<{ ok: true }>(`/matches/roster/${rosterId}/slots`, { method: 'POST', body: JSON.stringify({ slots }) }),
+
+  respinSlot: (rosterId: string, position: string, type: 'team' | 'era') =>
+    request<MatchState>(`/matches/roster/${rosterId}/respin`, { method: 'POST', body: JSON.stringify({ position, type }) }),
 
   lockRoster: (rosterId: string) => request<MatchState>(`/matches/roster/${rosterId}/lock`, { method: 'POST' }),
 

@@ -27,10 +27,11 @@ export interface LeaderboardEntry {
 
 export type StatEstimateReason = 'pre_tracking_era' | 'hypothetical_pre_three_point';
 
+/** Legacy free-browse shape from GET /players — interim/superseded by the per-slot draft pool below (spec 4c). Kept only for that one endpoint's response type. */
 export interface PlayerSummary {
   id: string;
   name: string;
-  position: string;
+  eligiblePositions: NbaPosition[];
   personKey: string;
   teamId: string;
   teamName: string;
@@ -45,9 +46,66 @@ export interface PlayerSummary {
   defenseRating: number;
   clutchModifier: number;
   stats: Record<string, number>;
-  /** statKey -> why it's an estimate, not a sourced figure (spec section 10). Absent keys are real numbers. */
   estimatedStats: Record<string, StatEstimateReason>;
 }
+
+/** A single player entry within a slot's draft pool (spec 4c/4f). */
+export interface DraftPoolPlayer {
+  id: string;
+  name: string;
+  eligiblePositions: NbaPosition[];
+  personKey: string;
+  stintStartYear: number;
+  stintEndYear: number;
+  isActive: boolean;
+  skinTone: string;
+  baseRating: number;
+  offenseRating: number;
+  defenseRating: number;
+  clutchModifier: number;
+  stats: Record<string, number>;
+  estimatedStats: Record<string, StatEstimateReason>;
+  /** Already picked into a different slot on this roster — grayed out, unselectable (spec 4c/4f). */
+  isDuplicate: boolean;
+}
+
+/** The offered team+era combo and its player pool for one draft slot. */
+export interface SlotPool {
+  teamId: string;
+  teamName: string;
+  teamColorHex: string;
+  era: string;
+  players: DraftPoolPlayer[];
+  teamRespinAvailable: boolean;
+  eraRespinAvailable: boolean;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  colorHex: string;
+}
+
+export type RolesMode = 'same_roles' | 'independent_roles';
+
+export interface CreateMatchRequest {
+  draftTimerSeconds?: number;
+  rolesMode?: RolesMode;
+  includedEras?: string[];
+  includedTeamIds?: string[];
+}
+
+export const ALL_ERAS = ['sixties', 'seventies', 'eighties', 'nineties', 'two_thousands', 'twenty_tens', 'twenty_twenties'] as const;
+export type Era = (typeof ALL_ERAS)[number];
+export const ERA_LABELS: Record<Era, string> = {
+  sixties: '1960s',
+  seventies: '1970s',
+  eighties: '1980s',
+  nineties: '1990s',
+  two_thousands: '2000s',
+  twenty_tens: '2010s',
+  twenty_twenties: '2020s',
+};
 
 export interface CreateMatchResponse {
   roomCode: string;
@@ -139,11 +197,18 @@ export interface MatchState {
   sport: 'nba';
   status: 'drafting' | 'simulating' | 'complete' | string;
   draftTimerSeconds: number;
+  rolesMode: RolesMode;
+  includedEras: string[];
+  includedTeamIds: string[];
   yourSide: 'A' | 'B' | null;
   yourRosterId: string | null;
   sideA: SideStatus;
   sideB: SideStatus;
   yourSlots: Record<string, string> | null;
   opponentSlots: Record<string, string> | null;
+  /** Your own roster's per-slot offered team+era + player pool (spec 4c/4f). Null once locked or you're not a participant. */
+  yourDraftPool: Record<string, SlotPool> | null;
+  yourTeamRespinUsed: boolean | null;
+  yourEraRespinUsed: boolean | null;
   gameResult: GameResult | null;
 }

@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ApiError, api } from '../lib/api';
+import { ALL_ERAS, ERA_LABELS, Era, RolesMode, Team } from '../lib/types';
 
 const TIMER_OPTIONS = [
   { label: '2 minutes', seconds: 120 },
@@ -14,15 +15,39 @@ const TIMER_OPTIONS = [
 export default function HomePage() {
   const router = useRouter();
   const [draftTimerSeconds, setDraftTimerSeconds] = useState(300);
+  const [rolesMode, setRolesMode] = useState<RolesMode>('independent_roles');
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [includedEras, setIncludedEras] = useState<Era[]>([]);
+  const [includedTeamIds, setIncludedTeamIds] = useState<string[]>([]);
+  const [showNarrowing, setShowNarrowing] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getTeams().then(setTeams).catch(() => {
+      // Non-fatal — the narrowing picker just won't have team checkboxes if this fails.
+    });
+  }, []);
+
+  function toggleEra(era: Era) {
+    setIncludedEras((prev) => (prev.includes(era) ? prev.filter((e) => e !== era) : [...prev, era]));
+  }
+
+  function toggleTeam(teamId: string) {
+    setIncludedTeamIds((prev) => (prev.includes(teamId) ? prev.filter((t) => t !== teamId) : [...prev, teamId]));
+  }
 
   async function createMatch() {
     setCreating(true);
     setError(null);
     try {
-      const match = await api.createMatch(draftTimerSeconds);
+      const match = await api.createMatch({
+        draftTimerSeconds,
+        rolesMode,
+        includedEras: includedEras.length > 0 ? includedEras : undefined,
+        includedTeamIds: includedTeamIds.length > 0 ? includedTeamIds : undefined,
+      });
       router.push(`/match/${match.roomCode}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to create a match.');
@@ -69,6 +94,83 @@ export default function HomePage() {
             ))}
           </select>
         </label>
+
+        <fieldset className="mt-4">
+          <legend className="text-sm text-gray-600">Roles for both players</legend>
+          <div className="mt-1 space-y-2">
+            <label className="flex items-start gap-2 rounded border border-gray-200 p-2 text-sm has-[:checked]:border-orange-400 has-[:checked]:bg-orange-50">
+              <input
+                type="radio"
+                name="rolesMode"
+                checked={rolesMode === 'independent_roles'}
+                onChange={() => setRolesMode('independent_roles')}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium">Independent random roles</span>
+                <span className="block text-xs text-gray-500">Each player gets their own random team+era sequence — more variance, more replayable.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 rounded border border-gray-200 p-2 text-sm has-[:checked]:border-orange-400 has-[:checked]:bg-orange-50">
+              <input type="radio" name="rolesMode" checked={rolesMode === 'same_roles'} onChange={() => setRolesMode('same_roles')} className="mt-0.5" />
+              <span>
+                <span className="font-medium">Same roles for both players</span>
+                <span className="block text-xs text-gray-500">Both players get the identical random sequence per slot — a fairer, apples-to-apples comparison.</span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <button
+          type="button"
+          onClick={() => setShowNarrowing((v) => !v)}
+          className="mt-4 text-sm text-orange-600 underline"
+        >
+          {showNarrowing ? 'Hide' : 'Narrow'} eligible eras/teams {includedEras.length + includedTeamIds.length > 0 ? `(${includedEras.length + includedTeamIds.length} selected)` : '(optional)'}
+        </button>
+
+        {showNarrowing && (
+          <div className="mt-3 space-y-3 rounded border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Leave everything unchecked to draw from the full pool. Checking any box restricts BOTH players to that selection.</p>
+            <div>
+              <div className="text-xs font-semibold text-gray-600">Eras</div>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {ALL_ERAS.map((era) => (
+                  <button
+                    key={era}
+                    type="button"
+                    onClick={() => toggleEra(era)}
+                    className={`rounded-full border px-2.5 py-1 text-xs ${
+                      includedEras.includes(era) ? 'border-orange-500 bg-orange-500 text-white' : 'border-gray-300 text-gray-600'
+                    }`}
+                  >
+                    {ERA_LABELS[era]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {teams.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold text-gray-600">Teams</div>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {teams.map((team) => (
+                    <button
+                      key={team.id}
+                      type="button"
+                      onClick={() => toggleTeam(team.id)}
+                      className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${
+                        includedTeamIds.includes(team.id) ? 'border-orange-500 bg-orange-50 font-medium text-orange-700' : 'border-gray-300 text-gray-600'
+                      }`}
+                    >
+                      <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: team.colorHex }} />
+                      {team.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <button
           type="button"

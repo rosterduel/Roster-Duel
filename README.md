@@ -55,6 +55,8 @@ apps/
       users/                Moderated, unique display names (spec 9a)
       stats/                Record/last-10/leaderboard, random-matchmaking
                              only (spec 9a)
+      teams/                 GET /teams — team names/colors for the
+                             era/team narrowing picker (spec 4e)
 packages/
   sim-engine/          Pure TypeScript simulation engine — standalone,
                        unit-tested, no dependency on web/api
@@ -394,15 +396,13 @@ piecemeal) around it:
   `nbaStints.ts`, so the stored stat and the value that feeds
   `offense_rating` can't silently drift apart.
 
-**`GET /players` is now interim/superseded.** `players.service.ts` still
-returns every stint across all teams/eras undifferentiated — the old
-"free browse" shape, just repointed from `Player` to `PlayerStint`. The
-real team+era-constrained draft pool is now built (see "Draft flow &
-matchmaking" below) and lives inside `GET /matches/:roomCode`'s
-`yourDraftPool`, not this endpoint. `GET /players` is kept only because
-the pre-Step-3 frontend still calls it; it becomes fully dead once the
-draft-flow frontend is rebuilt on top of `yourDraftPool` (not yet done —
-see "What's still interim" under "Draft flow & matchmaking" below).
+**`GET /players` is now dead code, kept only for reference.** `players.service.ts`
+still returns every stint across all teams/eras undifferentiated — the
+old "free browse" shape, just repointed from `Player` to `PlayerStint`.
+The real team+era-constrained draft pool is what the frontend actually
+uses (see "Draft flow & matchmaking" below): `DraftBoard.tsx` is built
+entirely on `GET /matches/:roomCode`'s `yourDraftPool`, and no frontend
+code calls `GET /players` anymore.
 
 Verify the new model end-to-end (real seeded Postgres data → Prisma →
 `toTeamInput` adapter → `simulateGame`, including the LeBron cross-stint
@@ -499,9 +499,8 @@ Full reasoning is in the schema file's header comment; summary:
 
 ## Team + era draft pool (spec sections 4c/4d/4e/4f)
 
-Backend for the real team+era-constrained draft flow that the Step 2
-rebuild's data model was built to support. **Frontend is not yet
-rebuilt on top of this** — see "What's still interim" below.
+The real team+era-constrained draft flow that the Step 2 rebuild's data
+model was built to support — backend and frontend both, end to end.
 
 ### Position eligibility (spec 4f)
 
@@ -626,17 +625,31 @@ live), respins are a normal authenticated POST against your own roster,
 and the existing draft-timer/lazy-expiry/WebSocket-with-polling-fallback
 mechanics (see "Draft flow & matchmaking" above) are untouched.
 
-### What's still interim
+### Frontend (spec 4c/4e)
 
-**The draft-flow frontend has not been rebuilt yet** — `DraftBoard.tsx`
-still calls the old free-browse `GET /players` and shows every player at
-a position across all teams/eras, with no team+era pools, no respin UI,
-no grayout, no settings screen. That's explicitly the next step. All of
-the above is verified at the API layer only, via a live end-to-end
-smoke test (create/join → inspect `yourDraftPool` → respin → pick →
-lock → simulate, run against the real dev server and Postgres, plus the
-dead-end/grayout/cross-combo-rejection edge cases) — not yet through
-the actual browser UI.
+`DraftBoard.tsx` is built entirely on `yourDraftPool` — six position
+tabs (team-color dot + team/era label, or the picked player's name once
+filled), an active-slot header with both respin buttons (each showing a
+`(1)`/`(0)` remaining-use counter, disabled without being consumed on a
+detected dead end), a sort dropdown defaulting to PPG with "Rating" and
+the position's other stat fields as alternatives, and `PlayerCard`
+rendering each pool entry with stint-scoped stats — visibly dimmed and
+disabled ("Already picked") when `isDuplicate` is set. A brand-new
+`GET /teams` endpoint (`apps/api/src/teams/`) backs the home page's
+match-creation settings screen — rolesMode radio buttons and a
+collapsible era/team narrowing picker (pill buttons, selection count in
+the toggle label) — inserted before match creation, so the invite link
+is only generated once settings are chosen.
+
+Verified live in the browser (Playwright), not just typecheck/unit
+tests: the settings screen (default state and with `same_roles` +
+narrowing selections applied), a naturally-occurring cross-slot
+duplicate case driven end-to-end (a `personKey` landing in two slots'
+pools, confirmed grayed out and unpickable in the second), and a fresh
+match's team respin (button enabled pre-use, pool and team label
+updating in place after the click, counter flipping to `(0)`, era
+respin left untouched at `(1)`) with the sort dropdown re-applied
+correctly by rating.
 
 ### Verifying this
 

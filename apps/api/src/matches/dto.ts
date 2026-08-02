@@ -89,5 +89,8 @@ export interface MatchStateDto {
   opponentSlots: Record<string, string> | null;
   /** Your own roster's per-slot offered team+era + player pool (spec 4c/4f). Null once your roster is locked (no longer drafting) or you're not a participant. */
   yourDraftPool: Record<string, SlotPoolDto> | null;
+  /** Roster-wide resource state — distinguishes "already used" from "dead-ended on this specific slot" (SlotPoolDto's per-slot booleans conflate both). Null if you're not a participant. */
+  yourTeamRespinUsed: boolean | null;
+  yourEraRespinUsed: boolean | null;
   gameResult: GameResultDto | null;
 }

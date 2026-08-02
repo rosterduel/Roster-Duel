@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { ApiError, api } from '../../../lib/api';
-import { NbaPosition, PlayerSummary } from '../../../lib/types';
+import { NbaPosition } from '../../../lib/types';
 import type { MatchState } from '../../../lib/types';
 import { NBA_POSITIONS } from '../../../lib/positions';
 import { DraftBoard } from '../../../components/DraftBoard';
@@ -19,12 +19,12 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 const SAVE_DEBOUNCE_MS = 600;
 
 export function DraftRoomClient({ roomCode }: { roomCode: string }) {
-  const [players, setPlayers] = useState<PlayerSummary[] | null>(null);
   const [match, setMatch] = useState<MatchState | null>(null);
   const [rosterId, setRosterId] = useState<string | null>(null);
   const [localSlots, setLocalSlots] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [locking, setLocking] = useState(false);
+  const [respinning, setRespinning] = useState(false);
   const [showGameCast, setShowGameCast] = useState(false);
   const initializedSlotsRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -55,8 +55,6 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
       }
       if (!cancelled) await refetchState();
     })();
-
-    api.getPlayers().then(setPlayers).catch(() => setError('Failed to load player pool.'));
 
     const interval = setInterval(refetchState, POLL_INTERVAL_MS);
 
@@ -98,6 +96,23 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
     }, SAVE_DEBOUNCE_MS);
   }
 
+  async function handleRespin(position: NbaPosition, type: 'team' | 'era') {
+    if (!rosterId || respinning) return;
+    setRespinning(true);
+    setError(null);
+    try {
+      const state = await api.respinSlot(rosterId, position, type);
+      setMatch(state);
+      // A respin clears any existing pick for that slot server-side — sync
+      // local state so the draft board doesn't keep showing a stale "Selected" pick.
+      if (state.yourSlots) setLocalSlots(state.yourSlots);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to respin.');
+    } finally {
+      setRespinning(false);
+    }
+  }
+
   async function handleLock() {
     if (!rosterId) return;
     setLocking(true);
@@ -133,7 +148,7 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
     );
   }
 
-  if (!match || !players) {
+  if (!match) {
     return (
       <main className="mx-auto max-w-md p-6 text-center text-gray-500">
         <p>Loading match…</p>
@@ -242,7 +257,15 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
 
       {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
 
-      <DraftBoard players={players} slots={localSlots} onPick={handlePick} locked={locking} />
+      <DraftBoard
+        draftPool={match.yourDraftPool ?? {}}
+        slots={localSlots}
+        onPick={handlePick}
+        onRespin={handleRespin}
+        locked={locking || respinning}
+        teamRespinUsed={match.yourTeamRespinUsed ?? false}
+        eraRespinUsed={match.yourEraRespinUsed ?? false}
+      />
 
       <div className="mt-6 flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4">
         <p className="text-sm text-gray-500">{NBA_POSITIONS.filter((p) => localSlots[p]).length} / 6 positions filled</p>

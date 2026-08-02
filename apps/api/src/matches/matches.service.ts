@@ -286,6 +286,8 @@ export class MatchesService {
       yourSlots: yourRoster ? (yourRoster.slots as Record<string, string>) : null,
       opponentSlots: bothLocked && opponentRoster ? (opponentRoster.slots as Record<string, string>) : null,
       yourDraftPool,
+      yourTeamRespinUsed: yourRoster?.teamRespinUsed ?? null,
+      yourEraRespinUsed: yourRoster?.eraRespinUsed ?? null,
       gameResult: gameResult ? toGameResultDto(gameResult) : null,
     };
   }
