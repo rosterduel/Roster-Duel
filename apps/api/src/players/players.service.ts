@@ -4,7 +4,8 @@ import { PrismaService } from '../prisma/prisma.service';
 export interface PlayerSummaryDto {
   id: string;
   name: string;
-  position: string;
+  /** Real position(s) this player is eligible for (spec 4f) — never includes '6MAN'. */
+  eligiblePositions: string[];
   /** Cross-stint identity — see schema.prisma's PlayerStint doc comment. Needed client-side for the spec 4c "no duplicate real person" rule, landing in the draft-flow rework. */
   personKey: string;
   teamId: string;
@@ -62,7 +63,7 @@ export class PlayersService {
       .map((s) => ({
         id: s.id,
         name: s.name,
-        position: s.primaryPosition,
+        eligiblePositions: s.eligiblePositions,
         personKey: s.personKey,
         teamId: s.teamId,
         teamName: s.team.name,

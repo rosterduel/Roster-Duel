@@ -39,7 +39,10 @@ function effectiveThreePointStats(seedStint: SeedPlayerStint): { threePtPct: num
     throw new Error(`Stint "${seedStint.name}" (${seedStint.team}/${seedStint.era}) predates the 3-point line but has no shooterReputation set.`);
   }
   return estimatePreThreePointStats({
-    position: seedStint.position,
+    // Canonical position (index 0) — see nbaStints.ts's header comment on
+    // why eligiblePositions[0] is the right position-adjustment reference
+    // even for a multi-position-eligible player.
+    position: seedStint.eligiblePositions[0],
     ftPct: seedStint.stats.ftPct,
     fgPct: seedStint.stats.fgPct,
     shooterReputation: seedStint.shooterReputation,
@@ -105,7 +108,7 @@ async function main() {
       where: { sport_teamId_era_name: { sport: 'nba', teamId, era: seedStint.era, name: seedStint.name } },
       update: {
         personKey: seedStint.personKey,
-        primaryPosition: seedStint.position,
+        eligiblePositions: seedStint.eligiblePositions,
         stintStartYear: seedStint.stintStartYear,
         stintEndYear: seedStint.stintEndYear,
         isActive: false,
@@ -115,7 +118,7 @@ async function main() {
         sport: 'nba',
         personKey: seedStint.personKey,
         name: seedStint.name,
-        primaryPosition: seedStint.position,
+        eligiblePositions: seedStint.eligiblePositions,
         teamId,
         era: seedStint.era,
         stintStartYear: seedStint.stintStartYear,
@@ -142,7 +145,9 @@ async function main() {
   // stint now, not per career player, but the formula itself is unchanged.
   const ratingInputs: RawPlayerStats[] = NBA_SEED_STINTS.map((seedStint) => ({
     playerId: stintIdByNaturalKey.get(`${seedStint.team}|${seedStint.era}|${seedStint.name}`)!,
-    position: seedStint.position,
+    // Canonical position (index 0) drives peer-grouping — see
+    // nbaStints.ts's header comment.
+    position: seedStint.eligiblePositions[0],
     ppg: seedStint.stats.ppg,
     rpg: seedStint.stats.rpg,
     apg: seedStint.stats.apg,

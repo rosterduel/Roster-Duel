@@ -12,6 +12,12 @@ export function isNbaPosition(value: string): value is NbaPosition {
   return (NBA_POSITIONS as readonly string[]).includes(value);
 }
 
+/** A stint paired with the roster SLOT it was actually drafted into. */
+export interface SlottedStint {
+  stint: StintWithStatsAndRating;
+  slotPosition: NbaPosition;
+}
+
 /**
  * Maps a seeded PlayerStint (with its stint-scoped stats and computed
  * rating — see schema.prisma's PlayerStint doc comment for why a stint,
@@ -23,13 +29,21 @@ export function isNbaPosition(value: string): value is NbaPosition {
  * computeRatings.ts for the split). The sim engine itself is unaware this
  * ID refers to a stint rather than a person — nothing downstream of this
  * adapter needed to change.
+ *
+ * `slotPosition` — NOT a property read off the stint — is what this player
+ * plays and is labeled as for THIS game (box score, sim bookkeeping). Spec
+ * 4f made this necessary: a stint's `eligiblePositions` can list several
+ * real positions (e.g. LeBron: SF/PF/SG), and which one he's actually
+ * playing is determined by which roster slot he was drafted into, not any
+ * property of the stint itself. The caller (matches.service.ts) is
+ * responsible for passing the roster's own slot assignment here.
  */
-export function toPlayerRatingInput(stint: StintWithStatsAndRating): PlayerRatingInput {
+export function toPlayerRatingInput({ stint, slotPosition }: SlottedStint): PlayerRatingInput {
   if (!stint.rating) {
     throw new Error(`Stint "${stint.name}" (${stint.id}) has no computed rating — run the seed/rating pipeline first.`);
   }
-  if (!isNbaPosition(stint.primaryPosition)) {
-    throw new Error(`Stint "${stint.name}" has non-NBA position "${stint.primaryPosition}" — this adapter is NBA-only for Phase 1.`);
+  if (!isNbaPosition(slotPosition)) {
+    throw new Error(`Stint "${stint.name}" was drafted into non-NBA slot "${slotPosition}" — this adapter is NBA-only for Phase 1.`);
   }
 
   const statByKey = new Map(stint.stats.map((s) => [s.statKey, Number(s.statValue)]));
@@ -44,7 +58,7 @@ export function toPlayerRatingInput(stint: StintWithStatsAndRating): PlayerRatin
   return {
     id: stint.id,
     name: stint.name,
-    position: stint.primaryPosition,
+    position: slotPosition,
     offenseRating: Number(stint.rating.offenseRating),
     defenseRating: Number(stint.rating.defenseRating),
     usageRate: Number(stint.rating.usageRate),
@@ -57,10 +71,10 @@ export function toPlayerRatingInput(stint: StintWithStatsAndRating): PlayerRatin
   };
 }
 
-export function toTeamInput(teamId: string, teamName: string, stints: StintWithStatsAndRating[]): TeamInput {
+export function toTeamInput(teamId: string, teamName: string, slottedStints: SlottedStint[]): TeamInput {
   return {
     teamId,
     teamName,
-    players: stints.map(toPlayerRatingInput),
+    players: slottedStints.map(toPlayerRatingInput),
   };
 }

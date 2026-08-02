@@ -82,6 +82,19 @@ enum StatEstimateReason {
   hypothetical_pre_three_point
 }
 
+// Spec 4e's pre-match setting: whether both rosters in a match draw the
+// SAME randomly-assigned team+era sequence per slot (same_roles — a fairer,
+// apples-to-apples skill comparison) or each draws their OWN independent
+// sequence (independent_roles — more variance/replayability). This only
+// governs the INITIAL assignment; respins are always private to the roster
+// that uses them (spec 4c's per-user resource), so a same_roles match can
+// still diverge between the two rosters after a respin — see Roster's
+// slotAssignments doc comment.
+enum RolesMode {
+  same_roles
+  independent_roles
+}
+
 // Sprite personalization for the GameCast animation (spec 4a) is skin tone
 // only — no facial detail, no jersey/team accuracy. A small fixed palette
 // (not a hex color) keeps the sprite art bounded to a few pre-drawn
@@ -129,25 +142,37 @@ model Team {
 // No `photoUrl` here (unlike the old `players` table) — still names/stats
 // only per spec section 10's legal notes; skin tone is the one exception,
 // used only for the schematic GameCast sprite, not a photo/likeness.
+//
+// `eligiblePositions` (spec 4f) replaces the original single
+// `primaryPosition` field entirely — a real player is often eligible for
+// more than one draft slot (e.g. LeBron James: SF/PF/SG), while others are
+// locked to exactly one (e.g. Rudy Gobert: C only). `eligiblePositions[0]`
+// is the CANONICAL position — the one used for rating peer-grouping in
+// computeRatings.ts — everything after it is additional slot eligibility
+// only, not a second "equally primary" position. Never contains '6MAN':
+// the 6th Man slot is a roster-slot-level flex exemption (any player from
+// the drawn combo is eligible, regardless of this array), not a real
+// position a player can be "eligible" for — see nbaStints.ts's header
+// comment and MatchesService's pool-filtering logic.
 model PlayerStint {
-  id              String   @id @default(uuid())
-  sport           Sport
-  personKey       String   @map("person_key")
-  name            String
-  primaryPosition String   @map("primary_position")
-  teamId          String   @map("team_id")
-  team            Team     @relation(fields: [teamId], references: [id])
-  era             Era
-  stintStartYear  Int      @map("stint_start_year")
-  stintEndYear    Int      @map("stint_end_year")
+  id                String   @id @default(uuid())
+  sport             Sport
+  personKey         String   @map("person_key")
+  name              String
+  eligiblePositions String[] @map("eligible_positions")
+  teamId            String   @map("team_id")
+  team              Team     @relation(fields: [teamId], references: [id])
+  era               Era
+  stintStartYear    Int      @map("stint_start_year")
+  stintEndYear      Int      @map("stint_end_year")
   // A stint is, by definition, a specific bounded period with one team —
   // always false in this seed data, even for a person who is still an
   // active NBA player elsewhere today, since this particular stint has
   // ended. Kept (rather than dropped) for schema continuity with the
   // original `players.is_active` and in case a still-ongoing stint is
   // seeded later.
-  isActive        Boolean  @map("is_active")
-  skinTone        SkinTone @map("skin_tone")
+  isActive          Boolean  @map("is_active")
+  skinTone          SkinTone @map("skin_tone")
 
   stats  PlayerStintStat[]
   rating PlayerStintRating?
@@ -238,11 +263,27 @@ model Roster {
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   sport         Sport     @default(nba)
   mode          String?
-  // { "PG": playerId, "SG": playerId, ... } — partial while drafting,
-  // must have all six NBA slots filled to lock (auto-fill guarantees this
-  // on timer expiry; a manual lock requires the drafter to have filled it
-  // themselves).
+  // { "PG": playerId, "SG": playerId, ... } — the PICKED player, partial
+  // while drafting, must have all six NBA slots filled to lock (auto-fill
+  // guarantees this on timer expiry; a manual lock requires the drafter to
+  // have filled it themselves).
   slots         Json      @default("{}")
+  // { "PG": { "teamId": "...", "era": "sixties" }, ... } — the OFFERED
+  // team+era combo per slot (spec 4c), separate from `slots` (the pick
+  // itself). Set for all 6 slots at roster-creation time: copied from the
+  // match's sharedSlotAssignments for `same_roles` matches, or drawn fresh
+  // for `independent_roles` ones (see Match.rolesMode). Respins mutate
+  // ONLY this roster's own copy from then on — even in a same_roles match,
+  // a respin is a private, forward-only divergence from the shared
+  // baseline, never resynced or shared with the opponent (confirmed design
+  // decision, not an oversight).
+  slotAssignments Json    @default("{}") @map("slot_assignments")
+  // Each is a single-use resource, shared across all 6 slots (spec 4c: ONE
+  // Team respin and ONE Era respin per draft, not per slot) — using either
+  // one on any slot flips its flag here and disables that respin type
+  // everywhere on this roster; the other stays independently available.
+  teamRespinUsed Boolean  @default(false) @map("team_respin_used")
+  eraRespinUsed  Boolean  @default(false) @map("era_respin_used")
   isLocked      Boolean   @default(false) @map("is_locked")
   lockedAt      DateTime? @map("locked_at")
   draftDeadline DateTime  @map("draft_deadline")
@@ -272,6 +313,19 @@ model Match {
   gamesToPlay       Int       @default(1) @map("games_to_play")
   draftTimerSeconds Int       @default(300) @map("draft_timer_seconds")
   status            String    @default("drafting") // 'drafting' | 'simulating' | 'complete'
+  // Spec 4e pre-match settings — chosen once by the match creator, applies
+  // to both rosters.
+  rolesMode         RolesMode @default(independent_roles) @map("roles_mode")
+  // Empty array = no narrowing (full pool eligible). Non-empty restricts
+  // which eras/teams a slot's random draw can land on.
+  includedEras      Era[]     @map("included_eras")
+  includedTeamIds   String[]  @map("included_team_ids")
+  // Only set (and only meaningful) when rolesMode is same_roles — the ONE
+  // team+era sequence both rosters copy into their own slotAssignments at
+  // creation time, computed once here so "same roles" actually means
+  // identical, not independently-but-identically-seeded RNG draws. Null
+  // for independent_roles matches, where each roster draws its own.
+  sharedSlotAssignments Json? @map("shared_slot_assignments")
   createdAt         DateTime  @default(now()) @map("created_at")
 
   gameResults GameResult[]

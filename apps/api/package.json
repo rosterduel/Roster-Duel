@@ -14,6 +14,7 @@
     "verify:sim": "ts-node scripts/verifySimEndToEnd.ts",
     "try:recap": "ts-node scripts/tryRecap.ts",
     "check:stats": "ts-node scripts/checkStatPlausibility.ts",
+    "check:positions": "ts-node scripts/checkPositionCoverage.ts",
     "test": "jest"
   },
   "prisma": {

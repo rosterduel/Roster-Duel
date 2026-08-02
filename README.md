@@ -35,16 +35,23 @@ apps/
                            team+era combos (spec section 4c)
       seed.ts             Seed script (npx prisma db seed)
     scripts/
-      verifySimEndToEnd.ts  Standalone script proving DB -> sim-engine works
-      tryRecap.ts            Manual live test for recap generation
+      verifySimEndToEnd.ts   Standalone script proving DB -> sim-engine works
+      tryRecap.ts             Manual live test for recap generation
+      checkStatPlausibility.ts  Structural stat-accuracy check (spec 10)
+      checkPositionCoverage.ts  Confirms every combo covers all 5 real
+                                 positions (spec 4f)
     src/
-      ratings/            Offline rating computation (base/offense/defense)
+      ratings/            Offline rating computation (base/offense/defense),
+                          pre-1980 3PT estimator (spec section 10)
       sim/                Adapter: Prisma player rows -> sim-engine TeamInput
       recap/               LLM-generated post-game recap (spec section 4b)
       session/             Anonymous session guard (spec: "no auth")
-      players/             GET /players — draft-screen player pool
+      players/             GET /players — legacy free-browse pool, interim/
+                            superseded by matches' yourDraftPool (spec 4c)
       matches/              Match/roster lifecycle, draft timer + auto-fill,
-                             WebSocket gateway for live draft-room updates
+                             team+era slot assignment + dual respins +
+                             grayout (spec 4c/4d/4e/4f), WebSocket gateway
+                             for live draft-room updates
       users/                Moderated, unique display names (spec 9a)
       stats/                Record/last-10/leaderboard, random-matchmaking
                              only (spec 9a)
@@ -387,18 +394,15 @@ piecemeal) around it:
   `nbaStints.ts`, so the stored stat and the value that feeds
   `offense_rating` can't silently drift apart.
 
-**What's still interim:** `GET /players` (`players.service.ts`) still
-returns every stint at a position across all teams/eras undifferentiated
-— the old "free browse" shape — just repointed from `Player` to
-`PlayerStint` and enriched with the new fields (`personKey`, `teamId`,
-`teamName`, `teamColorHex`, `era`, `stintStartYear`/`stintEndYear`,
-`skinTone`). This was a deliberate choice to keep the app compiling and
-fully testable end-to-end through the rebuild rather than leaving it
-broken while the real team+era-constrained draft UI/backend gets built —
-that's explicitly the next step (random team+era assignment per slot,
-respins, era/team pre-match filters, and the duplicate-person grayout
-rule this section's `personKey` design exists to support), not something
-this step does.
+**`GET /players` is now interim/superseded.** `players.service.ts` still
+returns every stint across all teams/eras undifferentiated — the old
+"free browse" shape, just repointed from `Player` to `PlayerStint`. The
+real team+era-constrained draft pool is now built (see "Draft flow &
+matchmaking" below) and lives inside `GET /matches/:roomCode`'s
+`yourDraftPool`, not this endpoint. `GET /players` is kept only because
+the pre-Step-3 frontend still calls it; it becomes fully dead once the
+draft-flow frontend is rebuilt on top of `yourDraftPool` (not yet done —
+see "What's still interim" under "Draft flow & matchmaking" below).
 
 Verify the new model end-to-end (real seeded Postgres data → Prisma →
 `toTeamInput` adapter → `simulateGame`, including the LeBron cross-stint
@@ -454,7 +458,9 @@ Full reasoning is in the schema file's header comment; summary:
   removes that player for the opponent. Both drafters can independently
   draft the same real player — the skill is in roster construction, not
   who clicks faster. `autoFillRosterSlots` (`draftAutoFill.ts`) only avoids
-  a player filling two slots on the *same* roster.
+  the same real person (by `personKey`, not stint id) filling two slots on
+  the *same* roster — see "Team + era draft pool" below for the full
+  eligibility/dedup rules this now enforces.
 - **Blind draft, enforced server-side**: `GET /matches/:roomCode` only
   ever returns *your own* roster's slots; the opponent's `slots` are
   withheld until **both** rosters are locked, at which point the "blind"
@@ -490,6 +496,154 @@ Full reasoning is in the schema file's header comment; summary:
   exists, but as a loading state while the request is in flight (a
   `max-height`-driven collapse/expand on a region below an always-visible
   masthead, so body text is revealed rather than squashed by scaling).
+
+## Team + era draft pool (spec sections 4c/4d/4e/4f)
+
+Backend for the real team+era-constrained draft flow that the Step 2
+rebuild's data model was built to support. **Frontend is not yet
+rebuilt on top of this** — see "What's still interim" below.
+
+### Position eligibility (spec 4f)
+
+`PlayerStint.primaryPosition` (a single value) is now
+`eligiblePositions: string[]` — most players list one real position;
+a deliberately conservative subset of well-established multi-position
+players (LeBron James: `['SF','PF','SG']`, matching the spec's own
+worked example; Giannis Antetokounmpo: `['PF','C','SF']`; Draymond
+Green, Tim Duncan, Kevin Garnett, etc.) list two or three.
+`eligiblePositions[0]` is the **canonical** position — the one used for
+rating peer-grouping in `computeRatings.ts` — not a second "equally
+primary" value.
+
+`'6MAN'` never appears inside `eligiblePositions` — it's a **roster
+slot** requirement (a bench-scorer role), not a real position a player
+can be "eligible" for. The 14 players previously seeded with a
+placeholder `position: '6MAN'` (one per combo) were re-authored with
+their actual real-world position(s) instead (e.g. Manu Ginóbili is
+`['SG','SF']`). One side effect, expected and not a bug: every player's
+computed rating shifted a small amount once this landed, purely from
+peer-group re-grouping (no stat inputs changed) — there's no longer a
+separate 14-player "6MAN" z-score bucket.
+
+`scripts/checkPositionCoverage.ts` (`npm run check:positions -w apps/api`)
+confirms every seeded team+era combo has at least one eligible player
+for each of the 5 real required positions — structurally guaranteed by
+how the data was authored (every player's original single position is
+preserved as a member of their new array), but verified rather than just
+asserted. Currently 0 gaps across all 14 combos.
+
+### Random per-slot assignment + eligibility-filtered pools (spec 4c/4f)
+
+Each of a roster's 6 slots gets its own randomly-assigned team+era combo
+(`Roster.slotAssignments`, drawn once per roster at creation time — see
+"Same roles vs. independent roles" below for how the two rosters in a
+match relate to each other). The player pool for a slot is that combo's
+roster **filtered to players eligible for that slot's position**
+(`filterEligibleForSlot()` in `draftPool.ts`) — e.g. a PG slot that draws
+"2020s Jazz" shows Donovan Mitchell-type players but not a center-only
+big, even though both played there. **6th Man is unfiltered** — every
+player from the drawn combo is eligible, regardless of
+`eligiblePositions` (spec 4f's flex rule).
+
+Pool data (team, era, players, respin availability) is served as part of
+`GET /matches/:roomCode`'s `yourDraftPool` — one entry per slot, own
+roster only (blind draft). Stats shown are the stint-scoped numbers
+already built in Step 2, not career aggregates — confirmed via the
+`assertSlotPicksAreValid()` validation path and the live end-to-end
+smoke test (see "Verifying this" below), not just at the API layer.
+
+### Respin mechanic (spec 4c) — two fully independent, roster-wide resources
+
+A roster gets exactly one Team respin and one Era respin, each usable on
+**any one slot**, and each entirely independent of the other — using the
+Team respin doesn't touch the Era respin's availability or vice versa.
+Once used (`Roster.teamRespinUsed` / `eraRespinUsed`), that respin type
+is unavailable on every slot for the rest of the draft. Respinning a
+slot that already had a pick clears that pick (the old combo's pool no
+longer applies). `drawTeamRespinCombo()`/`drawEraRespinCombo()`
+(`slotAssignment.ts`) keep the other axis fixed (Team respin: same era,
+new team; Era respin: same team, new era) and never redraw the exact
+current value.
+
+**Dead ends are real with the current 14-combo seed pool, not
+hypothetical**: most teams have only one seeded era, and most eras have
+only one seeded team (e.g. "New York + seventies" has no alternative
+team *or* era to respin into — both dead-end on that exact slot). Rather
+than expand the seed data or silently no-op, a dead-ended respin is
+**disabled without consuming the resource** — `SlotPoolDto.teamRespinAvailable`
+/ `eraRespinAvailable` reflect this per-slot (`hasTeamRespinAlternative()`
+/ `hasEraRespinAlternative()`), and the server independently re-validates
+on the actual respin request (a client can't force a dead-end respin
+through). Verified live: attempting a dead-end respin returns a 400
+without touching the roster's resource, which stays fully usable on a
+different slot.
+
+A second, narrower dead-end (spec 4f) — a drawn combo with real players,
+but literally none eligible for this specific slot's position — is
+structurally impossible with the current seed data (see "Position
+eligibility" above's coverage guarantee), so there was nothing to
+observe/flag back per the spec's request for that case.
+
+### No-duplicate-player grayout (spec 4c/4f)
+
+`buildPersonKeyToSlot()` + `isDuplicateInSlot()` (`draftPool.ts`) key
+duplicate detection on `personKey`, not stint id or position — a real
+person already picked into any slot shows up grayed out
+(`DraftPoolPlayerDto.isDuplicate`) everywhere else they'd otherwise be
+pickable, whether that's a **different stint** of the same person (e.g.
+LeBron via a different team+era) or a **different eligible position of
+the same stint** landing in a different slot's pool. This is per-roster
+only — the opposing roster's picks never affect this. Enforced
+server-side in three places, not just the display flag: `saveDraftSlots`
+(`assertSlotPicksAreValid`), the timer-expiry auto-fill path
+(`autoFillRosterSlots` now takes a `usedPersonKeys` set), and implicitly
+by the pool itself only ever offering real, currently-valid picks.
+
+### Same roles vs. independent roles + era/team narrowing (spec 4e)
+
+`POST /matches` accepts `rolesMode` (`same_roles` | `independent_roles`,
+default `independent_roles`), `includedEras`, and `includedTeamIds`.
+**`same_roles`**: the *initial* team+era sequence is computed once at
+match-creation time and stored on `Match.sharedSlotAssignments`; both
+rosters copy it verbatim rather than each independently drawing their
+own (verified live: both sides' pools match on all 6 slots at creation).
+Respins still diverge a roster from that shared baseline afterward —
+private and forward-only, exactly the design decision confirmed earlier
+in this project's planning. **`independent_roles`**: each roster draws
+its own sequence from the start. Era/team narrowing filters the combos
+either mode draws from; `assertFilterIsDraftable()` rejects match
+creation up front if the filtered pool can't fill all 5 real positions
+(not just "has any players at all") — verified live with both an
+accepted narrow-but-valid filter (era-only: sixties) and a rejected
+invalid one (nonexistent team id).
+
+### Async independence (spec 4d) — unaffected
+
+Nothing above requires both users online together. Slot assignment
+happens at roster creation/join time (independent per user under
+`independent_roles`; copied once under `same_roles`, not re-synced
+live), respins are a normal authenticated POST against your own roster,
+and the existing draft-timer/lazy-expiry/WebSocket-with-polling-fallback
+mechanics (see "Draft flow & matchmaking" above) are untouched.
+
+### What's still interim
+
+**The draft-flow frontend has not been rebuilt yet** — `DraftBoard.tsx`
+still calls the old free-browse `GET /players` and shows every player at
+a position across all teams/eras, with no team+era pools, no respin UI,
+no grayout, no settings screen. That's explicitly the next step. All of
+the above is verified at the API layer only, via a live end-to-end
+smoke test (create/join → inspect `yourDraftPool` → respin → pick →
+lock → simulate, run against the real dev server and Postgres, plus the
+dead-end/grayout/cross-combo-rejection edge cases) — not yet through
+the actual browser UI.
+
+### Verifying this
+
+```bash
+npm run check:positions -w apps/api   # every combo covers all 5 real positions
+npm run test:api                       # unit tests: slotAssignment, draftPool, draftAutoFill, matches
+```
 
 ## Accounts, moderation & leaderboards (spec section 9a)
 

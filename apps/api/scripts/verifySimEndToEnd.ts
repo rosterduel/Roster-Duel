@@ -18,21 +18,37 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { simulateGame } from '@roster-duel/sim-engine';
-import { NBA_POSITIONS, StintWithStatsAndRating, toTeamInput } from '../src/sim/toTeamInput';
+import { NBA_POSITIONS, SlottedStint, toTeamInput } from '../src/sim/toTeamInput';
 
 const prisma = new PrismaClient();
 
-async function loadTeamByCombo(teamName: string, era: string): Promise<StintWithStatsAndRating[]> {
+/**
+ * Greedily fills each of the 6 slots with a stint eligible for it (spec
+ * 4f), never reusing the same stint across two slots in this synthetic
+ * roster — same shape a real draft produces, just deterministic rather
+ * than user-picked. '6MAN' accepts any remaining stint regardless of
+ * eligibility (spec 4f's flex rule).
+ */
+async function loadTeamByCombo(teamName: string, era: string): Promise<SlottedStint[]> {
   const stints = await prisma.playerStint.findMany({
     where: { sport: 'nba', era: era as never, team: { name: teamName } },
     include: { stats: true, rating: true },
   });
-  const missing = NBA_POSITIONS.filter((pos) => !stints.some((s) => s.primaryPosition === pos));
-  if (missing.length > 0) {
-    throw new Error(`"${teamName}/${era}" is missing positions [${missing.join(', ')}] — did you run \`npm run db:seed -w apps/api\`?`);
+
+  const used = new Set<string>();
+  const slotted: SlottedStint[] = [];
+  for (const slotPosition of NBA_POSITIONS) {
+    const stint =
+      slotPosition === '6MAN'
+        ? stints.find((s) => !used.has(s.id))
+        : stints.find((s) => !used.has(s.id) && s.eligiblePositions.includes(slotPosition));
+    if (!stint) {
+      throw new Error(`"${teamName}/${era}" has no eligible player left for ${slotPosition} — did you run \`npm run db:seed -w apps/api\`?`);
+    }
+    used.add(stint.id);
+    slotted.push({ stint, slotPosition });
   }
-  // Preserve draft-slot order rather than whatever order the DB returns.
-  return NBA_POSITIONS.map((pos) => stints.find((s) => s.primaryPosition === pos)!);
+  return slotted;
 }
 
 async function verifyCrossStintDuplicate(): Promise<void> {

@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { StintWithStatsAndRating, toPlayerRatingInput, toTeamInput } from './toTeamInput';
+import { SlottedStint, StintWithStatsAndRating, toPlayerRatingInput, toTeamInput } from './toTeamInput';
 
 function stat(stintId: string, statKey: string, value: number): StintWithStatsAndRating['stats'][number] {
   return {
@@ -19,7 +19,7 @@ function makeStint(overrides: Partial<StintWithStatsAndRating> = {}): StintWithS
     sport: 'nba',
     personKey: 'test_player',
     name: 'Test Player',
-    primaryPosition: 'PG',
+    eligiblePositions: ['PG'],
     teamId: 'team-1',
     era: 'nineties',
     stintStartYear: 1993,
@@ -47,13 +47,17 @@ function makeStint(overrides: Partial<StintWithStatsAndRating> = {}): StintWithS
   };
 }
 
+function makeSlotted(overrides: Partial<StintWithStatsAndRating> = {}, slotPosition: SlottedStint['slotPosition'] = 'PG'): SlottedStint {
+  return { stint: makeStint(overrides), slotPosition };
+}
+
 describe('toPlayerRatingInput', () => {
   it('maps offense/defense/usage from player_stint_ratings and attribution rates from player_stint_stats', () => {
-    const stint = makeStint();
-    const input = toPlayerRatingInput(stint);
+    const slotted = makeSlotted();
+    const input = toPlayerRatingInput(slotted);
 
     expect(input).toEqual({
-      id: stint.id,
+      id: slotted.stint.id,
       name: 'Test Player',
       position: 'PG',
       offenseRating: 65,
@@ -68,26 +72,33 @@ describe('toPlayerRatingInput', () => {
     });
   });
 
-  it('throws if the stint has no computed rating', () => {
-    const stint = makeStint({ rating: null });
-    expect(() => toPlayerRatingInput(stint)).toThrow(/no computed rating/);
+  it('labels the player with the drafted SLOT position, not their eligiblePositions', () => {
+    // Eligible for SF/PF/SG, but drafted into the PF slot on this roster.
+    const slotted = makeSlotted({ eligiblePositions: ['SF', 'PF', 'SG'] }, 'PF');
+    const input = toPlayerRatingInput(slotted);
+    expect(input.position).toBe('PF');
   });
 
-  it('throws for a non-NBA position', () => {
-    const stint = makeStint({ primaryPosition: 'QB' });
-    expect(() => toPlayerRatingInput(stint)).toThrow(/non-NBA position/);
+  it('throws if the stint has no computed rating', () => {
+    const slotted = makeSlotted({ rating: null });
+    expect(() => toPlayerRatingInput(slotted)).toThrow(/no computed rating/);
+  });
+
+  it('throws for a non-NBA slot position', () => {
+    const slotted = { stint: makeStint(), slotPosition: 'QB' } as unknown as SlottedStint;
+    expect(() => toPlayerRatingInput(slotted)).toThrow(/non-NBA slot/);
   });
 
   it('throws if a required stat is missing', () => {
-    const stint = makeStint({ stats: [stat('stint-1', 'ast_rate', 0.3)] });
-    expect(() => toPlayerRatingInput(stint)).toThrow(/missing required stat "reb_rate"/);
+    const slotted = makeSlotted({ stats: [stat('stint-1', 'ast_rate', 0.3)] });
+    expect(() => toPlayerRatingInput(slotted)).toThrow(/missing required stat "reb_rate"/);
   });
 });
 
 describe('toTeamInput', () => {
   it('wraps mapped stints with team identity', () => {
-    const stints = [makeStint({ id: 's1', name: 'A' }), makeStint({ id: 's2', name: 'B', primaryPosition: 'SG' })];
-    const team = toTeamInput('team-a', 'Team Alpha', stints);
+    const slottedStints = [makeSlotted({ id: 's1', name: 'A' }, 'PG'), makeSlotted({ id: 's2', name: 'B' }, 'SG')];
+    const team = toTeamInput('team-a', 'Team Alpha', slottedStints);
 
     expect(team.teamId).toBe('team-a');
     expect(team.teamName).toBe('Team Alpha');
