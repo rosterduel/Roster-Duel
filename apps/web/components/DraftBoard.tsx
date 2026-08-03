@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { NBA_POSITIONS, POSITION_LABELS, ROUND_SORT_FIELDS } from '../lib/positions';
+import { computeRespinDisplay } from '../lib/respinDisplay';
 import { CurrentRound, ERA_LABELS, Era, NbaPosition, PickResult, RoundPlayer } from '../lib/types';
 import { PlayerCard } from './PlayerCard';
 
@@ -18,7 +19,12 @@ function RespinButton({
   onClick: () => void;
   disabled: boolean;
 }) {
-  const remaining = usedGlobally ? 0 : 1;
+  // See lib/respinDisplay.ts: the displayed count and the `!available` half
+  // of clickability MUST come from the same computation, or they can
+  // disagree (the bug this replaced — see its doc comment for the full
+  // story). `disabled` here is a separate, transient reason to grey out
+  // (a pick in flight) that doesn't affect the resource count.
+  const { remaining } = computeRespinDisplay(usedGlobally, available);
   const title = usedGlobally
     ? `${label} respin already used`
     : available

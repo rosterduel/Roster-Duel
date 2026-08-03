@@ -12,6 +12,7 @@
     "dev:api": "npm run start:dev -w apps/api",
     "test:sim": "npm run test -w packages/sim-engine",
     "test:api": "npm run test -w apps/api",
+    "test:web": "npm run test -w apps/web",
     "demo:sim": "npm run demo -w packages/sim-engine",
     "db:seed": "npm run db:seed -w apps/api"
   },
