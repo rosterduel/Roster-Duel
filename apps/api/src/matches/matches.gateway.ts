@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { OnGatewayConnection, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { ALLOWED_ORIGINS } from '../corsOrigins';
 
 /**
  * Real-time nice-to-have for the draft room — instant "opponent locked" /
@@ -13,7 +14,7 @@ import { Server, Socket } from 'socket.io';
  * only shaves the latency down when both sides are live.
  */
 @Injectable()
-@WebSocketGateway({ cors: { origin: true } })
+@WebSocketGateway({ cors: { origin: ALLOWED_ORIGINS } })
 export class MatchesGateway implements OnGatewayConnection {
   @WebSocketServer()
   server!: Server;
