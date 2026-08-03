@@ -8,6 +8,24 @@ directly (its network policy blocks `backboard.railway.com` and
 than something run automatically. See "What was actually tested" at the
 bottom for exactly what was and wasn't verified before you run this.
 
+## Step 0: Set a Railway spending limit — do this before provisioning anything
+
+Right after creating your Railway account, before adding Postgres, Redis, or
+the API service: set a spending limit or usage alert on the account so a
+misconfiguration can't run up a surprise bill. Look under **Account
+Settings → Usage/Billing** (this is Railway's current general area for
+spend controls, but I couldn't confirm the exact current menu wording —
+Railway's own docs were unreachable from this session for the same network-policy
+reason described at the bottom of this file, so verify the precise path in
+their dashboard/docs when you're there).
+
+This is precautionary, not because anything here is expected to be
+expensive: at this scale (one small API service, one Postgres instance, a
+handful of playtesters) you'd expect to land on Railway's ~$5/month Hobby
+tier. The point of the limit is just to make sure a mistake — an infinite
+loop, a runaway build, whatever — can't turn into an unexpected charge
+before you notice.
+
 ## 0. One-time prerequisites
 
 ```powershell
