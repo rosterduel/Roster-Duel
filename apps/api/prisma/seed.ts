@@ -112,7 +112,6 @@ async function main() {
         stintStartYear: seedStint.stintStartYear,
         stintEndYear: seedStint.stintEndYear,
         isActive: false,
-        skinTone: seedStint.skinTone,
       },
       create: {
         sport: 'nba',
@@ -124,7 +123,6 @@ async function main() {
         stintStartYear: seedStint.stintStartYear,
         stintEndYear: seedStint.stintEndYear,
         isActive: false,
-        skinTone: seedStint.skinTone,
       },
     });
     stintIdByNaturalKey.set(`${seedStint.team}|${seedStint.era}|${seedStint.name}`, stint.id);

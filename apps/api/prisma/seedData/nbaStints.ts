@@ -1,7 +1,6 @@
 export type NbaPosition = 'PG' | 'SG' | 'SF' | 'PF' | 'C' | '6MAN';
 export type RealNbaPosition = Exclude<NbaPosition, '6MAN'>;
 export type Era = 'sixties' | 'seventies' | 'eighties' | 'nineties' | 'two_thousands' | 'twenty_tens' | 'twenty_twenties';
-export type SkinTone = 'light' | 'medium' | 'dark';
 export type ShooterReputation = 'low' | 'average' | 'high';
 
 export interface SeedStintStats {
@@ -12,7 +11,7 @@ export interface SeedStintStats {
 
 export interface SeedPlayerStint {
   personKey: string; name: string; eligiblePositions: RealNbaPosition[]; team: string; era: Era;
-  stintStartYear: number; stintEndYear: number; skinTone: SkinTone; stats: SeedStintStats;
+  stintStartYear: number; stintEndYear: number; stats: SeedStintStats;
   usageRate: number; shooterReputation?: ShooterReputation;
 }
 
@@ -21,9 +20,12 @@ export interface SeedPlayerStint {
 // Do not hand-edit; re-run the script instead.
 // Real historical NBA data (spec Phase 1 data task) -- see KNOWN-ISSUES.md for
 // source provenance/licensing notes and this pass's known simplifications
-// (single-position eligibility, flat skinTone/shooterReputation defaults,
-// 12-franchise scope, pre-1974 defensive-stat estimate methodology). The bulk
-// data lives in nbaStints.data.json, not inline here -- see that decision's
-// rationale on the emit() function in the generator script.
+// (PG-SG-SF-PF-C adjacency-based position eligibility rather than a
+// per-player judgment call, flat shooterReputation defaults, 30-franchise
+// scope via FRANCHISE_ALIASES, pre-1974 defensive-stat estimate
+// methodology). The bulk data lives in nbaStints.data.json, not inline
+// here -- see that decision's rationale on the emit() function in the
+// generator script. No skinTone field -- sprites are differentiated by
+// each player's drafted-from team color instead (see PlayerSprite.tsx).
 import stintsData from './nbaStints.data.json';
 export const NBA_SEED_STINTS: SeedPlayerStint[] = stintsData as SeedPlayerStint[];

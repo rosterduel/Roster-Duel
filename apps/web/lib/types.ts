@@ -40,7 +40,6 @@ export interface PlayerSummary {
   stintStartYear: number;
   stintEndYear: number;
   isActive: boolean;
-  skinTone: string;
   baseRating: number;
   offenseRating: number;
   defenseRating: number;
@@ -58,7 +57,6 @@ export interface RoundPlayer {
   stintStartYear: number;
   stintEndYear: number;
   isActive: boolean;
-  skinTone: string;
   baseRating: number;
   offenseRating: number;
   defenseRating: number;
@@ -188,8 +186,6 @@ export interface GameMvp {
   leverageComponent: number;
 }
 
-export type SkinTone = 'light' | 'medium' | 'dark';
-
 export interface GameResult {
   scoreA: number;
   scoreB: number;
@@ -200,8 +196,12 @@ export interface GameResult {
   overtimePeriods: number;
   recapHeadline: string | null;
   recapArticle: string | null;
-  /** playerId (a PlayerStint id) -> skin tone, for GameCast sprite personalization (spec 4a). */
-  playerSkinTones: Record<string, SkinTone>;
+  /**
+   * playerId (a PlayerStint id) -> team colorHex, for GameCast sprite
+   * personalization (spec 4a) — players are differentiated by their
+   * drafted-from team's real color, not any skin-tone-like attribute.
+   */
+  playerJerseyColors: Record<string, string>;
 }
 
 export interface MatchState {

@@ -25,7 +25,6 @@ function makeStint(overrides: Partial<StintWithStatsAndRating> = {}): StintWithS
     stintStartYear: 1993,
     stintEndYear: 1997,
     isActive: false,
-    skinTone: 'medium',
     stats: [
       stat(id, 'ast_rate', 0.3),
       stat(id, 'reb_rate', 0.08),

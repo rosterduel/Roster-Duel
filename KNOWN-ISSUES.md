@@ -24,35 +24,45 @@ files technically extend through 2026.
 
 ## Known simplifications in the real-data import pass
 
-- **12-franchise scope, current-identity-only.** The Team table stays at
-  its existing 12 de-branded city/moniker teams (spec 4c's trademark-
-  avoidance guidance) — the import only pulls players from those 12 real
-  franchises, matched by their CURRENT full name (e.g. "Golden State
-  Warriors," not also "Philadelphia Warriors"/"San Francisco Warriors,"
-  the same franchise's earlier identities). This is a deliberate scope
-  boundary, not an oversight: franchise continuity through a relocation/
-  rename is a real judgment call this pass doesn't make. Concrete effect:
-  7 of the 84 possible (team, era) combos end up with zero players and
-  simply aren't rollable (e.g. Golden State/sixties, Utah/seventies) —
-  self-consistent with how an empty combo already behaves elsewhere in the
-  app, not a bug.
-- **Single-position eligibility.** The hand-curated pool this replaces
-  hand-tagged a handful of well-known players with 2-3 eligible positions
-  (e.g. LeBron James as SF/PF/SG). The bulk source data only records one
-  canonical position per player-season, so every real-data stint gets
-  exactly one `eligiblePositions` entry (the most common position across
-  that stint's seasons). One real consequence worth knowing: this is
-  data-driven per STINT, not fixed per player — e.g. LeBron James's
-  2020-2025 Lakers stint is tagged PG (matching his actual point-forward
-  role in Basketball-Reference's own records for those seasons), while his
-  earlier stints are tagged SF.
-- **`skinTone` and `shooterReputation` are flat defaults, not per-player
-  judgment.** The original 84-player pool hand-assigned these (skin tone
-  for the GameCast sprite; shooter reputation as one input to the pre-1980
-  3-point estimate). Neither scales to ~1,839 real people. Every
-  bulk-imported player gets `skinTone: 'medium'` and, for the ~700 stints
-  ending before 1980, `shooterReputation: 'average'` — a neutral,
-  documented default rather than an inferred guess.
+- **30-franchise scope, current-identity mapping.** The Team table now
+  covers all 30 current NBA franchises (`apps/api/prisma/seedData/
+  teams.ts`). Every historical name a franchise has played under maps to
+  its CURRENT identity via `FRANCHISE_ALIASES` in `buildRealNbaSeedData.ts`
+  (e.g. Seattle SuperSonics-era stints pull in under "Oklahoma City") —
+  built from the actual distinct team-name strings in the source data,
+  cross-checked against known NBA franchise lineage, not assumed. Two
+  genuinely ambiguous cases (the 1988-2002 vs. 2014-present "Charlotte
+  Hornets" name, and the team that physically relocated to New Orleans in
+  2002) are resolved by matching the NBA's own official franchise-history
+  rulings — documented inline in that file. Small, very short-lived
+  defunct pre-1960 teams and ABA franchises that folded outright during
+  the 1976 merger are simply omitted (no current-day identity to map to).
+  Concrete effect: 26 of the 210 possible (team, era) combos end up with
+  zero players and simply aren't rollable (e.g. a franchise that didn't
+  exist yet under any name in a given decade) — self-consistent with how
+  an empty combo already behaves elsewhere in the app, not a bug; verified
+  via `checkPositionCoverage.ts` that every one of the other 184 combos
+  still has full 5-position coverage.
+- **Position eligibility is a default adjacency rule, not per-player
+  judgment.** Every player is eligible for their source-data canonical
+  position plus its immediate neighbor(s) along the PG-SG-SF-PF-C chain
+  (PG: PG/SG; SG: SG/PG/SF; SF: SF/SG/PF; PF: PF/SF/C; C: C/PF) — applied
+  uniformly, including the PF/SF crossover. This is data-driven per STINT,
+  not fixed per player: e.g. LeBron James's 2020-2025 Lakers stint is
+  PG/SG (matching his actual point-forward-listed position in the source
+  data for those seasons), while his earlier stints are SF/SG/PF. A
+  manually-curated exception list for well-known single-position
+  specialists (to remove, e.g., the PF/SF crossover for a handful of
+  players) is a deliberate, separate follow-up — not inferred from stats
+  in this pass.
+- **`shooterReputation` is a flat default, not per-player judgment.** The
+  original 84-player pool hand-assigned this (one input to the pre-1980
+  3-point estimate) from contemporary scoring reputation. Doesn't scale to
+  thousands of real people — every stint ending before 1980 gets
+  `shooterReputation: 'average'`, a neutral, documented default rather
+  than an inferred guess. (Skin-tone personalization for the GameCast
+  sprite has been removed entirely, not defaulted — see "Sprite
+  personalization" below.)
 - **`personKey` is a normalized name slug, not Basketball-Reference's
   collision-proof player ID.** Needed so a real person who has stints in
   BOTH the pre-2010 and 2010+ sources (a career spanning that boundary,
@@ -62,15 +72,15 @@ files technically extend through 2026.
   stints across 3 teams/eras all resolve to one `personKey`. Small,
   accepted risk: two different real players who happen to share an
   identical normalized name would incorrectly collide. Not hit in
-  practice for the ~1,839 people imported, but not exhaustively checked
+  practice for the ~2,919 people imported, but not exhaustively checked
   for every name either.
 - **Pre-1974 defensive stats (steals/blocks/turnovers) use a coarser
   estimate than the original hand-curated pool.** Steals/blocks/turnovers
   weren't officially tracked before the 1973-74 season. The original
   12-stint hand-curated pool estimated these per-player from contemporary
   reputation (All-Defensive voting, etc.) — a judgment call that doesn't
-  scale to ~450 affected real-data stints. This pass instead uses the
-  position-average of REAL (non-estimated) values within the imported
+  scale to the real-data pool's affected stints. This pass instead uses
+  the position-average of REAL (non-estimated) values within the imported
   pool, applied flat to every stint predating that tracking start —
   documented, transparent, but flatter than a real individual signal (e.g.
   Bill Russell's true rebounding/shot-blocking dominance isn't reflected
@@ -99,12 +109,31 @@ files technically extend through 2026.
   data (a single literal "games played" column vs. inferring what counts
   as one qualifying "season").
 
+## Sprite personalization: team color, not skin tone
+
+The GameCast sprite (spec 4a) originally personalized each player with a
+skin-tone attribute (light/medium/dark). This has been removed entirely —
+not defaulted, not approximated, not inferred from any data — since no
+player's sprite should be interpretable as a depiction of that real
+person's actual race/appearance, positive or negative. There is no
+`skinTone` field anywhere in the schema, seed data, API, or frontend
+anymore (`SkinTone` enum and `player_stints.skin_tone` column dropped via
+migration `20260804000000_drop_skin_tone`).
+
+Sprites are now differentiated by each player's drafted-from team's real
+color instead, applied to the jersey portion of the sprite — reusing the
+exact same per-player lookup-map data flow the skin-tone mechanism already
+had (`GameResultDto.playerJerseyColors`, `playerId -> team colorHex`,
+assembled the same way `playerSkinTones` used to be). The body/limb
+portions of every sprite use one flat, stylized, clearly-non-skin-toned
+gray (`PlayerSprite.tsx`'s `BODY_FILL`) for every player, uniformly.
+
 ## Regenerating the real-data seed set
 
 `npx ts-node --transpile-only apps/api/scripts/buildRealNbaSeedData.ts`
 (run from `apps/api/`) rebuilds `apps/api/prisma/seedData/nbaStints.ts` and
 its sibling `nbaStints.data.json` from `data/raw/*.csv`. The bulk data
-lives in the `.json` file, not inline in the `.ts` file — a ~3,100-element
+lives in the `.json` file, not inline in the `.ts` file — a ~7,500-element
 object literal checked structurally against the `SeedPlayerStint[]`
 interface exceeds TypeScript's internal complexity limit (`TS2590`) under
 both `nest build` and full-type-checking `ts-node`; a JSON import sidesteps

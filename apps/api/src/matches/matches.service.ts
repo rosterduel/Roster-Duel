@@ -280,7 +280,7 @@ export class MatchesService {
     const opponentRoster = yourSide === 'A' ? match.rosterB : yourSide === 'B' ? match.rosterA : null;
 
     const gameResult = match.status === 'complete' ? await this.prisma.gameResult.findFirst({ where: { matchId: match.id }, orderBy: { gameNumber: 'desc' } }) : null;
-    const playerSkinTones = gameResult ? await this.buildPlayerSkinTones(match) : null;
+    const playerJerseyColors = gameResult ? await this.buildPlayerJerseyColors(match) : null;
 
     const yourCurrentRound = yourRoster && !yourRoster.isLocked ? await this.buildCurrentRound(yourRoster, match) : null;
 
@@ -301,7 +301,7 @@ export class MatchesService {
       yourCurrentRound,
       yourTeamRespinUsed: yourRoster?.teamRespinUsed ?? null,
       yourEraRespinUsed: yourRoster?.eraRespinUsed ?? null,
-      gameResult: gameResult ? toGameResultDto(gameResult, playerSkinTones ?? {}) : null,
+      gameResult: gameResult ? toGameResultDto(gameResult, playerJerseyColors ?? {}) : null,
     };
   }
 
@@ -323,9 +323,9 @@ export class MatchesService {
 
     await this.generateRecapForGameResult(gameResult.id, match);
     const refreshed = await this.prisma.gameResult.findUniqueOrThrow({ where: { id: gameResult.id } });
-    const playerSkinTones = await this.buildPlayerSkinTones(match);
+    const playerJerseyColors = await this.buildPlayerJerseyColors(match);
     this.gateway.notifyRecapReady(match.roomCode);
-    return toGameResultDto(refreshed, playerSkinTones);
+    return toGameResultDto(refreshed, playerJerseyColors);
   }
 
   // --- internals ---
@@ -540,23 +540,23 @@ export class MatchesService {
   }
 
   /**
-   * A `playerId -> skinTone` map covering both rosters' locked picks (spec
-   * 4a's GameCast sprite personalization: "the only personalization is
-   * matching the real player's skin tone"). Box score / highlight
-   * `playerId`s are PlayerStint ids (see toTeamInput.ts's SlottedStint —
-   * the sim engine is fed `id: stint.id` and never itself knows what a
-   * player looks like), so this is a small, cheap lookup keyed the same
-   * way — not a new column, not a sim-engine change, just a read of data
-   * that was already stored and already used pre-draft (RoundPlayerDto).
+   * A `playerId -> team colorHex` map covering both rosters' locked picks
+   * (spec 4a's GameCast sprite personalization, reworked to differentiate
+   * players by their drafted-from team's real color instead of any
+   * skin-tone-like attribute — see schema.prisma's PlayerStint doc
+   * comment). Box score / highlight `playerId`s are PlayerStint ids (see
+   * toTeamInput.ts's SlottedStint — the sim engine is fed `id: stint.id`
+   * and never itself knows what a player looks like), so this is a small,
+   * cheap lookup keyed the same way.
    */
-  private async buildPlayerSkinTones(match: MatchWithRosters): Promise<Record<string, string>> {
+  private async buildPlayerJerseyColors(match: MatchWithRosters): Promise<Record<string, string>> {
     const stintIds = [
       ...Object.values((match.rosterA?.slots as Record<string, string>) ?? {}),
       ...Object.values((match.rosterB?.slots as Record<string, string>) ?? {}),
     ].filter(Boolean);
     if (stintIds.length === 0) return {};
-    const stints = await this.prisma.playerStint.findMany({ where: { id: { in: stintIds } }, select: { id: true, skinTone: true } });
-    return Object.fromEntries(stints.map((s) => [s.id, s.skinTone]));
+    const stints = await this.prisma.playerStint.findMany({ where: { id: { in: stintIds } }, select: { id: true, team: { select: { colorHex: true } } } });
+    return Object.fromEntries(stints.map((s) => [s.id, s.team.colorHex]));
   }
 
   private async loadRosterPlayers(slots: Record<string, string>): Promise<SlottedStint[]> {
@@ -663,7 +663,6 @@ export class MatchesService {
       stintStartYear: s.stintStartYear,
       stintEndYear: s.stintEndYear,
       isActive: s.isActive,
-      skinTone: s.skinTone,
       baseRating: Number(s.rating!.baseRating),
       offenseRating: Number(s.rating!.offenseRating),
       defenseRating: Number(s.rating!.defenseRating),
@@ -729,7 +728,7 @@ function toCreateMatchResponse(match: MatchWithRosters, side: 'A' | 'B'): Create
 
 function toGameResultDto(
   gameResult: { scoreA: number; scoreB: number; boxScore: unknown; highlights: unknown; mvp: unknown; overtimePeriods: number; recapHeadline: string | null; recapArticle: string | null },
-  playerSkinTones: Record<string, string>,
+  playerJerseyColors: Record<string, string>,
 ): GameResultDto {
   return {
     scoreA: gameResult.scoreA,
@@ -741,6 +740,6 @@ function toGameResultDto(
     overtimePeriods: gameResult.overtimePeriods,
     recapHeadline: gameResult.recapHeadline,
     recapArticle: gameResult.recapArticle,
-    playerSkinTones,
+    playerJerseyColors,
   };
 }

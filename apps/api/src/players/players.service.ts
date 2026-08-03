@@ -15,7 +15,6 @@ export interface PlayerSummaryDto {
   stintStartYear: number;
   stintEndYear: number;
   isActive: boolean;
-  skinTone: string;
   baseRating: number;
   offenseRating: number;
   defenseRating: number;
@@ -72,7 +71,6 @@ export class PlayersService {
         stintStartYear: s.stintStartYear,
         stintEndYear: s.stintEndYear,
         isActive: s.isActive,
-        skinTone: s.skinTone,
         baseRating: Number(s.rating!.baseRating),
         offenseRating: Number(s.rating!.offenseRating),
         defenseRating: Number(s.rating!.defenseRating),

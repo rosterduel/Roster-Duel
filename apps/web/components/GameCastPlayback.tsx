@@ -5,11 +5,11 @@ import { Basketball } from './Basketball';
 import { CourtDiagram } from './CourtDiagram';
 import { PlayerSprite } from './PlayerSprite';
 import { buildArcKeyframes, computeBlockDeflection, computeStealDeflection, OUTCOME_BADGE, POSE_BY_PLAY_TYPE, resolveBallEndPosition, ZONE_POSITIONS } from '../lib/court';
-import { Highlight, SkinTone } from '../lib/types';
+import { Highlight } from '../lib/types';
 
 const BALL_FLIGHT_MS = 1000;
 const HOLD_MS = 1600;
-const DEFAULT_SKIN_TONE: SkinTone = 'medium';
+const DEFAULT_JERSEY_COLOR = '#3B3355';
 
 function formatClock(seconds: number): string {
   const clamped = Math.max(0, Math.round(seconds));
@@ -24,14 +24,18 @@ export function GameCastPlayback({
   highlights,
   teamAName,
   teamBName,
-  playerSkinTones,
+  playerJerseyColors,
   onDone,
 }: {
   highlights: Highlight[];
   teamAName: string;
   teamBName: string;
-  /** playerId (a PlayerStint id) -> skin tone, for sprite personalization (spec 4a). */
-  playerSkinTones: Record<string, SkinTone>;
+  /**
+   * playerId (a PlayerStint id) -> team colorHex, for sprite
+   * personalization (spec 4a) — players are differentiated by their
+   * drafted-from team's real color, not any skin-tone-like attribute.
+   */
+  playerJerseyColors: Record<string, string>;
   onDone: () => void;
 }) {
   // Spec 4a: play back in chronological order, distinct from the leverage-
@@ -63,7 +67,7 @@ export function GameCastPlayback({
   const blockDeflection = current && isBlock && start && hoopEnd ? computeBlockDeflection(start, hoopEnd) : null;
   const stealDeflection = current && isStealLike && start && end ? computeStealDeflection(start, end) : null;
   const pose = current ? POSE_BY_PLAY_TYPE[current.playType] : 'shoot';
-  const tone: SkinTone = (current && playerSkinTones[current.playerId]) || DEFAULT_SKIN_TONE;
+  const jerseyColor = (current && playerJerseyColors[current.playerId]) || DEFAULT_JERSEY_COLOR;
   // Sprite standing position — not always `start`: a blocker meets the
   // ball at the contact point (reusing the SAME computed deflection the
   // ball itself follows, not a separately-recomputed one, so the two
@@ -131,7 +135,7 @@ export function GameCastPlayback({
       <div className="overflow-hidden rounded-lg border-4 border-[#8F5A1D]" style={{ imageRendering: 'pixelated' }}>
         <div className="aspect-[2/1] w-full">
           <CourtDiagram>
-            <PlayerSprite key={index} pose={pose} tone={tone} x={spritePos.x} y={spritePos.y} scale={1.7} className="animate-sprite-fade-in" />
+            <PlayerSprite key={index} pose={pose} jerseyColor={jerseyColor} x={spritePos.x} y={spritePos.y} scale={1.7} className="animate-sprite-fade-in" />
             <Basketball ref={ballRef} style={ballInitialStyle} />
             {showBadge && badgePos && (
               <g transform={`translate(${badgePos.x}, ${badgePos.y})`}>

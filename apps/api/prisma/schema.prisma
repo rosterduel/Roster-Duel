@@ -95,16 +95,6 @@ enum RolesMode {
   independent_roles
 }
 
-// Sprite personalization for the GameCast animation (spec 4a) is skin tone
-// only — no facial detail, no jersey/team accuracy. A small fixed palette
-// (not a hex color) keeps the sprite art bounded to a few pre-drawn
-// variants rather than needing per-player custom art.
-enum SkinTone {
-  light
-  medium
-  dark
-}
-
 // City/moniker only (e.g. "Chicago," "Utah") — NOT full franchise names or
 // logos, per spec 4c's trademark-avoidance guidance (section 10). colorHex
 // is each team's REAL, recognizable primary color (spec 4c's revised
@@ -144,9 +134,14 @@ model Team {
 // two different people ever shared a display name. It's set by hand at
 // seed time, not derived.
 //
-// No `photoUrl` here (unlike the old `players` table) — still names/stats
-// only per spec section 10's legal notes; skin tone is the one exception,
-// used only for the schematic GameCast sprite, not a photo/likeness.
+// No `photoUrl` here (unlike the old `players` table) — names/stats only
+// per spec section 10's legal notes. The GameCast sprite (spec 4a) used to
+// carry a per-player skinTone field for personalization, but that was
+// dropped entirely (not replaced with an inferred/approximated value) —
+// no real player's sprite should be interpretable as a depiction of that
+// person's actual race/appearance. Sprites are differentiated visually by
+// each player's drafted-from team color instead, read directly off `team`
+// at render time — no new field needed here for that.
 //
 // `eligiblePositions` (spec 4f) replaces the original single
 // `primaryPosition` field entirely — a real player is often eligible for
@@ -177,7 +172,6 @@ model PlayerStint {
   // original `players.is_active` and in case a still-ongoing stint is
   // seeded later.
   isActive          Boolean  @map("is_active")
-  skinTone          SkinTone @map("skin_tone")
 
   stats  PlayerStintStat[]
   rating PlayerStintRating?

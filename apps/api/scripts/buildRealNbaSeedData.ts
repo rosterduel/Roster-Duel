@@ -32,7 +32,7 @@
  */
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import type { Era, NbaPosition, RealNbaPosition, SeedPlayerStint, ShooterReputation, SkinTone } from '../prisma/seedData/nbaStints';
+import type { Era, NbaPosition, RealNbaPosition, SeedPlayerStint, ShooterReputation } from '../prisma/seedData/nbaStints';
 
 const DATA_DIR = join(__dirname, '../../../data/raw');
 const OUT_FILE = join(__dirname, '../prisma/seedData/nbaStints.ts');
@@ -40,34 +40,112 @@ const OUT_FILE = join(__dirname, '../prisma/seedData/nbaStints.ts');
 const MIN_GAMES_THRESHOLD = 50;
 const PRE_1980_END_YEAR = 1980;
 
-// The 12 real franchises this app's de-branded Team table represents (see
-// seedData/teams.ts) — full historical name as it appears in Team
-// Abbrev.csv, mapped to this app's city/moniker-only team name. Matching
-// on the EXACT full franchise name (not abbreviation, which changed for
-// some franchises, e.g. San Antonio's SAA->SAS) and, crucially, NOT
-// matching predecessor/relocated names (e.g. "San Francisco Warriors",
-// "New Orleans Jazz") — those are real but different eras of team
-// identity, and including them would need franchise-continuity judgment
-// calls beyond this Phase 1 pass's scope (see KNOWN-ISSUES.md: some
-// team+era combos, like Golden State/sixties, end up with zero players as
-// a result and simply won't be a rollable combo — self-consistent with
-// how the draft pool already treats any empty combo).
-const TARGET_TEAMS: Record<string, string> = {
+// All 30 current NBA franchises (see seedData/teams.ts) PLUS every
+// historical name a franchise has played under, mapped to that
+// franchise's CURRENT city/moniker identity — a relocated/renamed
+// franchise's older-name seasons pull in under today's name, they don't
+// get a separate team entry. Built from the actual distinct team-name
+// strings in Team Abbrev.csv (grepped and cross-checked against known
+// NBA franchise lineage), not recalled from memory alone. Two genuinely
+// ambiguous cases, resolved by matching the NBA's own official franchise-
+// history rulings:
+// - "Charlotte Hornets" (the string) covers BOTH the original 1988-2002
+//   expansion team AND the 2014-present Bobcats-renamed team — the NBA's
+//   own 2014 ruling lets the current Charlotte Hornets claim the
+//   pre-2002 team's history, so both map here.
+// - The team that physically relocated in 2002 plays on as "New Orleans
+//   Hornets" (2003-2013) and "New Orleans/Oklahoma City Hornets" (the
+//   2005-06/2006-07 Katrina-displacement seasons, still the New Orleans
+//   franchise) — both map to New Orleans, NOT Oklahoma City. Oklahoma
+//   City's own team is the unrelated, later-relocated Seattle SuperSonics
+//   (2008 onward).
+// Small, very-short-lived defunct pre-1960 teams and ABA franchises that
+// folded outright during the 1976 merger (Virginia Squires, Kentucky
+// Colonels, Utah Stars, Spirits of St. Louis, and several others) are
+// simply omitted — they have no current-day NBA identity to map to, and
+// (for the pre-1960 ones) predate this app's earliest era bucket anyway.
+const FRANCHISE_ALIASES: Record<string, string> = {
+  // --- current identities (self-mapped) ---
+  'Atlanta Hawks': 'Atlanta',
   'Boston Celtics': 'Boston',
-  'Philadelphia 76ers': 'Philadelphia',
-  'Los Angeles Lakers': 'Los Angeles',
+  'Brooklyn Nets': 'Brooklyn',
+  'Charlotte Hornets': 'Charlotte',
   'Chicago Bulls': 'Chicago',
-  'Utah Jazz': 'Utah',
-  'San Antonio Spurs': 'San Antonio',
-  'Detroit Pistons': 'Detroit',
   'Cleveland Cavaliers': 'Cleveland',
-  'Miami Heat': 'Miami',
+  'Dallas Mavericks': 'Dallas',
+  'Denver Nuggets': 'Denver',
+  'Detroit Pistons': 'Detroit',
   'Golden State Warriors': 'Golden State',
+  'Houston Rockets': 'Houston',
+  'Indiana Pacers': 'Indiana',
+  'Los Angeles Clippers': 'LA Clippers',
+  'Los Angeles Lakers': 'Los Angeles',
+  'Memphis Grizzlies': 'Memphis',
+  'Miami Heat': 'Miami',
   'Milwaukee Bucks': 'Milwaukee',
+  'Minnesota Timberwolves': 'Minnesota',
+  'New Orleans Pelicans': 'New Orleans',
   'New York Knicks': 'New York',
+  'Oklahoma City Thunder': 'Oklahoma City',
+  'Orlando Magic': 'Orlando',
+  'Philadelphia 76ers': 'Philadelphia',
+  'Phoenix Suns': 'Phoenix',
+  'Portland Trail Blazers': 'Portland',
+  'Sacramento Kings': 'Sacramento',
+  'San Antonio Spurs': 'San Antonio',
+  'Toronto Raptors': 'Toronto',
+  'Utah Jazz': 'Utah',
+  'Washington Wizards': 'Washington',
+  // --- historical names (relocations/renames -> current identity) ---
+  'Philadelphia Warriors': 'Golden State',
+  'San Francisco Warriors': 'Golden State',
+  'Minneapolis Lakers': 'Los Angeles',
+  'Fort Wayne Pistons': 'Detroit',
+  'Rochester Royals': 'Sacramento',
+  'Cincinnati Royals': 'Sacramento',
+  'Kansas City-Omaha Kings': 'Sacramento',
+  'Kansas City Kings': 'Sacramento',
+  'Syracuse Nationals': 'Philadelphia',
+  'Tri-Cities Blackhawks': 'Atlanta',
+  'Milwaukee Hawks': 'Atlanta',
+  'St. Louis Hawks': 'Atlanta',
+  'Chicago Packers': 'Washington',
+  'Chicago Zephyrs': 'Washington',
+  'Baltimore Bullets': 'Washington',
+  'Capital Bullets': 'Washington',
+  'Washington Bullets': 'Washington',
+  'Seattle SuperSonics': 'Oklahoma City',
+  'New York Nets': 'Brooklyn',
+  'New Jersey Nets': 'Brooklyn',
+  'Buffalo Braves': 'LA Clippers',
+  'San Diego Clippers': 'LA Clippers',
+  'San Diego Rockets': 'Houston',
+  'Dallas Chaparrals': 'San Antonio',
+  'Texas Chaparrals': 'San Antonio',
+  'New Orleans Jazz': 'Utah',
+  'Vancouver Grizzlies': 'Memphis',
+  'New Orleans Hornets': 'New Orleans',
+  'New Orleans/Oklahoma City Hornets': 'New Orleans',
+  'Charlotte Bobcats': 'Charlotte',
+  'Denver Rockets': 'Denver',
 };
 
 const REAL_POSITIONS = new Set(['PG', 'SG', 'SF', 'PF', 'C']);
+
+// Default adjacency rule along the PG-SG-SF-PF-C chain (replaces
+// single-position-only eligibility inherited directly from the source
+// data): every player is eligible for their source-data position plus its
+// immediate neighbor(s) on the chain. Applied uniformly to every player,
+// including the PF<->SF crossover -- a manually-curated exception list for
+// well-known single-position specialists is a deliberate, separate follow-
+// up, not inferred from stats here.
+const POSITION_ADJACENCY: Record<RealNbaPosition, RealNbaPosition[]> = {
+  PG: ['PG', 'SG'],
+  SG: ['SG', 'PG', 'SF'],
+  SF: ['SF', 'SG', 'PF'],
+  PF: ['PF', 'SF', 'C'],
+  C: ['C', 'PF'],
+};
 
 function eraForSeason(season: number): Era | null {
   if (season >= 1960 && season <= 1969) return 'sixties';
@@ -167,8 +245,8 @@ function loadHistoricalRows(): SeasonRow[] {
     const season = Number(row.season);
     if (!(season >= 1960 && season < 2010)) continue; // strict pre-2010 scope for this source
     if (AGGREGATE_TEAM_RE.test(row.team)) continue; // "2TM"/"3TM" multi-team rollups, not a real team
-    const seedTeam = TARGET_TEAMS[fullNameBySeasonAbbrev.get(`${row.season}|${row.team}`) ?? ''];
-    if (!seedTeam) continue; // not one of our 12 franchises (or not that franchise's identity yet)
+    const seedTeam = FRANCHISE_ALIASES[fullNameBySeasonAbbrev.get(`${row.season}|${row.team}`) ?? ''];
+    if (!seedTeam) continue; // not one of our 30 franchises (or not that franchise's identity yet)
     const pos = row.pos;
     if (!REAL_POSITIONS.has(pos)) continue; // 'NA' or otherwise unclassifiable
 
@@ -312,7 +390,7 @@ function loadCc0Rows(calibration: ReturnType<typeof calibrateProxyRatios>): Seas
   for (const row of data) {
     const season = Number(row.Year);
     if (!(season >= 2010 && season <= 2029)) continue;
-    const seedTeam = TARGET_TEAMS[fullNameBySeasonAbbrev.get(`${season}|${row.Team}`) ?? ''];
+    const seedTeam = FRANCHISE_ALIASES[fullNameBySeasonAbbrev.get(`${season}|${row.Team}`) ?? ''];
     if (!seedTeam) continue;
     const pos = (row.Pos ?? '').split('-')[0]; // this file's Pos is already single-token in practice; defensive split just in case
     if (!REAL_POSITIONS.has(pos)) continue;
@@ -526,12 +604,11 @@ function emit(stints: ReturnType<typeof buildStints>): void {
     return {
       personKey: s.personKey,
       name: s.name,
-      eligiblePositions: [s.pos],
+      eligiblePositions: POSITION_ADJACENCY[s.pos],
       team: s.team,
       era: s.era,
       stintStartYear: s.stintStartYear,
       stintEndYear: s.stintEndYear,
-      skinTone: 'medium',
       usageRate: Number(fmt(s.usageRate)),
       ...(shooterReputation ? { shooterReputation } : {}),
       stats: {
@@ -557,7 +634,6 @@ function emit(stints: ReturnType<typeof buildStints>): void {
   const ts = `export type NbaPosition = 'PG' | 'SG' | 'SF' | 'PF' | 'C' | '6MAN';
 export type RealNbaPosition = Exclude<NbaPosition, '6MAN'>;
 export type Era = 'sixties' | 'seventies' | 'eighties' | 'nineties' | 'two_thousands' | 'twenty_tens' | 'twenty_twenties';
-export type SkinTone = 'light' | 'medium' | 'dark';
 export type ShooterReputation = 'low' | 'average' | 'high';
 
 export interface SeedStintStats {
@@ -568,7 +644,7 @@ export interface SeedStintStats {
 
 export interface SeedPlayerStint {
   personKey: string; name: string; eligiblePositions: RealNbaPosition[]; team: string; era: Era;
-  stintStartYear: number; stintEndYear: number; skinTone: SkinTone; stats: SeedStintStats;
+  stintStartYear: number; stintEndYear: number; stats: SeedStintStats;
   usageRate: number; shooterReputation?: ShooterReputation;
 }
 
@@ -577,10 +653,13 @@ export interface SeedPlayerStint {
 // Do not hand-edit; re-run the script instead.
 // Real historical NBA data (spec Phase 1 data task) -- see KNOWN-ISSUES.md for
 // source provenance/licensing notes and this pass's known simplifications
-// (single-position eligibility, flat skinTone/shooterReputation defaults,
-// 12-franchise scope, pre-1974 defensive-stat estimate methodology). The bulk
-// data lives in nbaStints.data.json, not inline here -- see that decision's
-// rationale on the emit() function in the generator script.
+// (PG-SG-SF-PF-C adjacency-based position eligibility rather than a
+// per-player judgment call, flat shooterReputation defaults, 30-franchise
+// scope via FRANCHISE_ALIASES, pre-1974 defensive-stat estimate
+// methodology). The bulk data lives in nbaStints.data.json, not inline
+// here -- see that decision's rationale on the emit() function in the
+// generator script. No skinTone field -- sprites are differentiated by
+// each player's drafted-from team color instead (see PlayerSprite.tsx).
 import stintsData from './nbaStints.data.json';
 export const NBA_SEED_STINTS: SeedPlayerStint[] = stintsData as SeedPlayerStint[];
 `;
@@ -590,7 +669,7 @@ export const NBA_SEED_STINTS: SeedPlayerStint[] = stintsData as SeedPlayerStint[
 function main(): void {
   console.log('Loading historical (pre-2010) rows...');
   const historicalRows = loadHistoricalRows();
-  console.log(`  ${historicalRows.length} qualifying pre-2010 player-team-season rows for our 12 franchises.`);
+  console.log(`  ${historicalRows.length} qualifying pre-2010 player-team-season rows for our 30 franchises.`);
 
   console.log('Calibrating 2010+ proxy ratios against 1990-2009 real data...');
   const calibration = calibrateProxyRatios(historicalRows);
@@ -598,7 +677,7 @@ function main(): void {
 
   console.log('Loading CC0 2010-2025 rows...');
   const cc0Rows = loadCc0Rows(calibration);
-  console.log(`  ${cc0Rows.length} qualifying 2010+ player-team-season rows for our 12 franchises.`);
+  console.log(`  ${cc0Rows.length} qualifying 2010+ player-team-season rows for our 30 franchises.`);
 
   console.log('Aggregating into team+era stints...');
   const stints = buildStints([...historicalRows, ...cc0Rows]);
