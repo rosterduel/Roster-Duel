@@ -25,6 +25,32 @@ export const ZONE_POSITIONS: Record<CourtZone, Point> = {
   three_top: { x: 540, y: 200 },
 };
 
+/**
+ * The attacking hoop's actual rendered rim center — must match
+ * `CourtDiagram.tsx`'s `CourtEnd({ dir: -1, x0: 796 })` rim ellipse
+ * (`cx = x0 + 26 * dir = 770`, `cy = 200`) exactly, or the ball's arc
+ * visibly lands short of/in front of the hoop instead of at it.
+ * Deliberately NOT the same point as `ZONE_POSITIONS.paint` (730,200) —
+ * that value is a "standing in the paint" position (also used as a shot's
+ * *start* zone for a close-range attempt, and to place a rebounder), and
+ * collapsing it onto the exact rim would put a shooter or rebounder
+ * sprite visually on top of the hoop graphic. Only where the BALL itself
+ * needs to terminate for a shot attempt should snap to this.
+ */
+export const HOOP_POSITION: Point = { x: 770, y: 200 };
+
+/**
+ * Where a shot attempt's ball actually needs to end up. Every make/miss/
+ * rebound event's `endLocation` is `'paint'` (sim-engine's possession.ts),
+ * which `ZONE_POSITIONS` treats as a general "in the paint" standing spot
+ * — snap that specific case to the hoop's real rim center so the arc
+ * terminates AT the hoop, not near it. Any other zone (e.g. `backcourt`,
+ * for a turnover) passes through unchanged.
+ */
+export function resolveBallEndPosition(zone: CourtZone): Point {
+  return zone === 'paint' ? HOOP_POSITION : ZONE_POSITIONS[zone];
+}
+
 export type SpritePose = 'shoot' | 'steal' | 'block' | 'reach';
 
 /** playType -> which sprite pose performs it (spec 4a). Turnover reuses Steal's crouch — approved, no dedicated pose requested for it. */
@@ -141,17 +167,41 @@ export function computeBlockDeflection(start: Point, end: Point): BlockDeflectio
   return { contact, deflectEnd, keyframes };
 }
 
-/**
- * Where the sprite performing the highlighted action actually stands. Not
- * always `startLocation` — the highlighted player differs by playType
- * (spec 4a + the highlights.ts blocker-attribution fix): a shooter
- * releases from `startLocation`, but a blocker meets the ball at the
- * contact point (not where the shooter stood), and a rebounder is at
- * `endLocation` (where rebounds are actually grabbed), not the shooter's
- * original spot.
- */
-export function spritePositionForPlay(playType: PlayType, start: Point, end: Point): Point {
-  if (playType === 'block') return computeBlockDeflection(start, end).contact;
-  if (playType === 'offensive_rebound') return end;
-  return start;
+export interface StealDeflection {
+  /** Where the deflected ball ends up — a small, contained nudge near where the play happened, not a trip across the court. Also where the outcome badge appears. */
+  end: Point;
+  keyframes: Keyframe[];
 }
+
+const STEAL_TRAVEL_DISTANCE = 32;
+
+/**
+ * A steal/turnover's ball motion — deliberately much more subdued than
+ * both the normal scoring arc and the block's dramatic deflection: a
+ * short, contained nudge near where the play happened, not a trip across
+ * the court. A turnover/steal event's `endLocation` is always
+ * `'backcourt'` (sim-engine's possession.ts) — ~180 units from
+ * `mid_range`, roughly a quarter of the court's width — using that
+ * distance directly reads as a full-court launch, not a hand-to-hand
+ * deflection, so this travels only `STEAL_TRAVEL_DISTANCE` in that same
+ * general direction rather than the whole way to `end`.
+ */
+export function computeStealDeflection(start: Point, end: Point): StealDeflection {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const ux = dx / dist;
+  const uy = dy / dist;
+  const shortEnd: Point = { x: start.x + ux * STEAL_TRAVEL_DISTANCE, y: start.y + uy * STEAL_TRAVEL_DISTANCE };
+
+  const control = arcControlPoint(start, shortEnd);
+  const steps = 5;
+  const keyframes: Keyframe[] = Array.from({ length: steps + 1 }, (_, i) => {
+    const t = i / steps;
+    const p = quadraticBezier(start, control, shortEnd, t);
+    return { transform: `translate(${p.x}px, ${p.y}px)`, offset: t };
+  });
+
+  return { end: shortEnd, keyframes };
+}
+

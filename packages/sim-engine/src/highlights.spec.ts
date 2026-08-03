@@ -123,3 +123,42 @@ describe('buildHighlights block attribution (spec 4a GameCast: the sprite must p
     expect(highlight.description).toContain('The Shooter');
   });
 });
+
+describe('buildHighlights turnover attribution — steal-caused vs. generic (spec 4a follow-up: confirmed already correct, locked in with tests since this exact case had none before)', () => {
+  const nameById = new Map([
+    ['offense-1', 'The Offense Player'],
+    ['defender-1', 'The Defender'],
+  ]);
+
+  it('credits the DEFENDER with steal-framed wording when a stealPlayerId caused the turnover', () => {
+    const events = [
+      event({
+        outcome: 'turnover',
+        playType: 'steal',
+        turnoverPlayerId: 'offense-1',
+        stealPlayerId: 'defender-1',
+      }),
+    ];
+
+    const [highlight] = buildHighlights(events, nameById, 1);
+    expect(highlight.playerId).toBe('defender-1');
+    expect(highlight.playerName).toBe('The Defender');
+    expect(highlight.description).toContain('The Defender');
+    expect(highlight.description).toContain('steal');
+  });
+
+  it('keeps the generic, unattributed framing for a turnover with NO steal (out of bounds, offensive foul, etc.)', () => {
+    const events = [
+      event({
+        outcome: 'turnover',
+        playType: 'turnover',
+        turnoverPlayerId: 'offense-1',
+        stealPlayerId: undefined,
+      }),
+    ];
+
+    const [highlight] = buildHighlights(events, nameById, 1);
+    expect(highlight.description).toContain('costly turnover');
+    expect(highlight.description).not.toContain('steal');
+  });
+});

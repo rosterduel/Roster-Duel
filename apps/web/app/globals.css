@@ -68,10 +68,37 @@
   animation: sprite-fade-in 200ms ease-out;
 }
 
+/* GameCast (spec 4a polish): a small, subtle hop on the shooting sprite's
+   release, synced with the ball leaving the hand — both fire on the same
+   highlight mount/index-change, no extra JS timing needed. Lives on an
+   INNER group (see PlayerSprite.tsx) for the same reason as the badge:
+   the outer group's SVG `transform` ATTRIBUTE (position/scale) would
+   otherwise get replaced outright by a CSS transform animation rather
+   than combining with it. Kept small (6px) per explicit direction —
+   "not a big leap." */
+@keyframes shot-hop {
+  0% {
+    transform: translateY(0);
+  }
+  35% {
+    transform: translateY(-6px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+.animate-shot-hop {
+  animation: shot-hop 400ms ease-out;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-round-reveal,
   .animate-badge-pop,
-  .animate-sprite-fade-in {
+  .animate-sprite-fade-in,
+  .animate-shot-hop {
     animation: none;
   }
 }

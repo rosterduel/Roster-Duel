@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Basketball } from './Basketball';
 import { CourtDiagram } from './CourtDiagram';
 import { PlayerSprite } from './PlayerSprite';
-import { buildArcKeyframes, computeBlockDeflection, OUTCOME_BADGE, POSE_BY_PLAY_TYPE, spritePositionForPlay, ZONE_POSITIONS } from '../lib/court';
+import { buildArcKeyframes, computeBlockDeflection, computeStealDeflection, OUTCOME_BADGE, POSE_BY_PLAY_TYPE, resolveBallEndPosition, ZONE_POSITIONS } from '../lib/court';
 import { Highlight, SkinTone } from '../lib/types';
 
 const BALL_FLIGHT_MS = 1000;
@@ -44,31 +44,50 @@ export function GameCastPlayback({
 
   const current = chronological[index];
   const start = current ? ZONE_POSITIONS[current.startLocation] : undefined;
+  // `end` is the raw "standing" zone position (used for sprite placement,
+  // e.g. a rebounder at 'paint') — `hoopEnd` snaps that same zone to the
+  // hoop's actual rendered rim center for the BALL's flight, so a made/
+  // missed shot's arc terminates at the hoop instead of stopping short of
+  // it (a coordinate mismatch between this zone table and CourtDiagram's
+  // real rim position, fixed after visual review).
   const end = current ? ZONE_POSITIONS[current.endLocation] : undefined;
+  const hoopEnd = current ? resolveBallEndPosition(current.endLocation) : undefined;
   const isBlock = current?.playType === 'block';
+  const isStealLike = current?.playType === 'steal' || current?.playType === 'turnover';
   // Block gets a genuinely different ball path (spec 4a) — computed once
-  // per highlight, not a reskin of the normal arc.
-  const deflection = current && isBlock && start && end ? computeBlockDeflection(start, end) : null;
+  // per highlight, not a reskin of the normal arc. Steal/turnover gets a
+  // much more contained deflection than the generic arc would produce
+  // (that arc's raw endLocation is 'backcourt', ~180 units away — reading
+  // as a full-court launch rather than a hand-to-hand change of
+  // possession, fixed after visual review).
+  const blockDeflection = current && isBlock && start && hoopEnd ? computeBlockDeflection(start, hoopEnd) : null;
+  const stealDeflection = current && isStealLike && start && end ? computeStealDeflection(start, end) : null;
   const pose = current ? POSE_BY_PLAY_TYPE[current.playType] : 'shoot';
   const tone: SkinTone = (current && playerSkinTones[current.playerId]) || DEFAULT_SKIN_TONE;
-  const spritePos = current && start && end ? spritePositionForPlay(current.playType, start, end) : { x: 0, y: 0 };
-  const badgePos = deflection ? deflection.deflectEnd : end;
+  // Sprite standing position — not always `start`: a blocker meets the
+  // ball at the contact point (reusing the SAME computed deflection the
+  // ball itself follows, not a separately-recomputed one, so the two
+  // never drift out of sync), and a rebounder stands at `end` (where
+  // rebounds are actually grabbed), not the shooter's original spot.
+  const spritePos = !current || !start ? { x: 0, y: 0 } : blockDeflection ? blockDeflection.contact : current.playType === 'offensive_rebound' ? (end ?? start) : start;
+  const badgePos = blockDeflection ? blockDeflection.deflectEnd : stealDeflection ? stealDeflection.end : hoopEnd;
   const ballInitialStyle = start ? { transform: `translate(${start.x}px, ${start.y}px)` } : undefined;
 
   // Ball motion — runs before paint (useLayoutEffect) so there's no
   // one-frame flash at the origin before the animation takes over.
   useLayoutEffect(() => {
     const ballEl = ballRef.current;
-    if (!ballEl || !current || !start || !end) return undefined;
+    if (!ballEl || !current || !start || !hoopEnd) return undefined;
+
+    const finalKeyframes = blockDeflection ? blockDeflection.keyframes : stealDeflection ? stealDeflection.keyframes : buildArcKeyframes(start, hoopEnd);
+    const finalPos = blockDeflection ? blockDeflection.deflectEnd : stealDeflection ? stealDeflection.end : hoopEnd;
 
     if (prefersReducedMotion()) {
-      const finalPos = deflection ? deflection.deflectEnd : end;
       ballEl.style.transform = `translate(${finalPos.x}px, ${finalPos.y}px)`;
       return undefined;
     }
 
-    const keyframes = deflection ? deflection.keyframes : buildArcKeyframes(start, end);
-    const anim = ballEl.animate(keyframes, { duration: BALL_FLIGHT_MS, easing: 'ease-in-out', fill: 'forwards' });
+    const anim = ballEl.animate(finalKeyframes, { duration: BALL_FLIGHT_MS, easing: 'ease-in-out', fill: 'forwards' });
     return () => anim.cancel();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index]);

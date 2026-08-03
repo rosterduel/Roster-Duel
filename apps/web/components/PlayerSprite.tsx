@@ -41,7 +41,13 @@ export function PlayerSprite({
   return (
     <g transform={`translate(${x}, ${y}) scale(${scale})`} className={className}>
       {pose === 'shoot' && (
-        <>
+        // Inner group carries the release hop (spec 4a polish: "a small
+        // visible hop/jump on release, synced with the ball leaving the
+        // hand") — nested separately from the outer positioning group
+        // because a CSS animation on `transform` would otherwise replace
+        // that outer group's SVG `transform` ATTRIBUTE outright rather
+        // than combining with it (same pattern as the outcome badge).
+        <g className="animate-shot-hop">
           <rect x={-4} y={-20} width={8} height={8} fill={skin} />
           <rect x={-6} y={-11} width={12} height={11} fill={JERSEY} />
           <rect x={-6} y={0} width={12} height={7} fill={SHORTS} />
@@ -49,7 +55,7 @@ export function PlayerSprite({
           <rect x={4} y={7} width={5} height={13} fill={skin} />
           <rect x={-13} y={-21} width={5} height={11} fill={skin} />
           <rect x={9} y={-27} width={5} height={15} fill={skin} />
-        </>
+        </g>
       )}
       {pose === 'steal' && (
         <>
