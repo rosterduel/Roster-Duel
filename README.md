@@ -226,6 +226,41 @@ screen is unaffected. `npm run verify:sim -w apps/api` and the full test
 suite (84 API / 71 sim-engine, two new in `highlights.spec.ts` for the
 attribution fixes) all pass.
 
+**Polish pass, post-review**: the first real build's shot pose read as
+static, the ball's arc landed short of the hoop, and the steal/turnover
+deflection traveled unrealistically far. Fixed:
+
+- The shooting pose gets a small release hop (`animate-shot-hop` in
+  `globals.css`, nested inner `<g>` — same attribute/property `transform`
+  conflict as the outcome badge) synced to the ball leaving the hand.
+  Confirmed with a bounding-box measurement across the animation window
+  (not just a screenshot), since a 6px motion doesn't reliably show up in
+  a single static frame.
+- `resolveBallEndPosition()`/`HOOP_POSITION` in `court.ts` snap a shot's
+  ball flight to the hoop's actual rendered rim center, separate from
+  `ZONE_POSITIONS.paint` (which still doubles as a shot's start zone and
+  a rebounder's/shooter's standing position — collapsing those onto the
+  rim would put a sprite visually on top of the hoop graphic).
+- `computeStealDeflection()` gives steal/turnover a short, contained
+  nudge near the play (`STEAL_TRAVEL_DISTANCE`) instead of traveling the
+  full distance to `endLocation: 'backcourt'` — that raw distance read as
+  a full-court launch. Block's deflection is untouched and stays the more
+  dramatic of the two, by design.
+- One highlight-attribution question turned out **not** to be a bug:
+  `describe()` already credits a steal-caused turnover to the stealing
+  defender with steal-framed wording; this had zero test coverage before,
+  so it's now locked in with tests rather than changed.
+
+A synthetic verification video with hand-set `leverageScore`s (built to
+force every `playType` into one short recording, since a real game's
+leverage-ranked top-5 rarely produces a natural steal/block/rebound) was
+initially mistaken for representative model output — worth flagging
+explicitly in the delivery message next time, since it's easy to conflate
+with the real-game recording otherwise. Separately confirmed via a 9-seed
+leverage sweep: non-scoring plays (misses, turnovers) never came close to
+a real game's top-5 threshold, so the win-probability model needed no
+change. 73 sim-engine tests now (two more for turnover attribution).
+
 ### Game MVP formula (spec section 4b)
 
 `GameResult.mvp` (computed in `packages/sim-engine/src/mvp.ts`) is an
