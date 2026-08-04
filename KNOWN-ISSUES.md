@@ -142,3 +142,18 @@ this since it's type-asserted as one blob, not checked element-by-element.
 `--transpile-only` for the same underlying reason (full type-checking
 `prisma/seed.ts`, which transitively imports the JSON-backed data, was
 still impractically slow even after the JSON split).
+
+## Deferred features
+
+- **Result-ready notifications.** When a match's simulation becomes
+  available (both players have drafted), the waiting player currently has
+  no way to know except manually checking the link again. Planned
+  approach: optional email account (email/password, drafting itself stays
+  fully anonymous/optional) + a "you'll be emailed when it's ready" prompt
+  shown when the invite link is copied, using Resend (free tier, 3,000
+  emails/month) for sending. Browser push notifications considered and
+  deferred separately — meaningfully harder to implement well (service
+  workers, permission prompts) and notably inconsistent on iPhone Safari.
+  Not needed for current family/friends testing phase; revisit once the
+  player base grows beyond people who'll remember to check back on their
+  own.
