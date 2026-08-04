@@ -1,4 +1,5 @@
-import { PrismaClient, StatEstimateReason } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
+import { Prisma, PrismaClient, StatEstimateReason } from '@prisma/client';
 import { computeRatings, RawPlayerStats } from '../src/ratings/computeRatings';
 import { estimatePreThreePointStats } from '../src/ratings/estimatePreThreePointStats';
 import { NBA_SEED_TEAMS } from './seedData/teams';
@@ -7,6 +8,67 @@ import { NBA_SEED_STINTS, SeedPlayerStint } from './seedData/nbaStints';
 const prisma = new PrismaClient();
 
 const CLUTCH_MODIFIER_DEFAULT = 1.0;
+
+// Number of player_stint_stats rows written per batched upsert — the actual
+// bottleneck this script was rewritten for (14 stat rows x ~7,500 stints is
+// ~100k rows; one upsert per row over a network connection to a remote
+// Postgres proxy is what previously dropped mid-run with P1017 "server has
+// closed the connection" after ~30 minutes).
+const STAT_BATCH_SIZE = 500;
+// How often to print "still working" progress during a long sequential
+// phase — long silence during a multi-minute run looks identical to a hang.
+const PROGRESS_LOG_INTERVAL = 500;
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 500;
+
+/**
+ * Retries a transient failure (a dropped/reset connection to a remote
+ * Postgres proxy, most commonly) up to MAX_RETRIES times with a short linear
+ * backoff. Every write in this script is an upsert keyed on a natural key,
+ * so retrying — or re-running the whole script from scratch — is always
+ * safe; this just avoids a single network hiccup killing an otherwise-fine
+ * multi-minute run.
+ */
+async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt === MAX_RETRIES) break;
+      const delayMs = RETRY_BASE_DELAY_MS * attempt;
+      console.warn(`  [retry] ${label} failed (attempt ${attempt}/${MAX_RETRIES}): ${err instanceof Error ? err.message : String(err)} — retrying in ${delayMs}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
+type StatRow = { stintId: string; statKey: string; statValue: number; scope: string; estimateReason: StatEstimateReason | null };
+
+/**
+ * Bulk-upserts one batch of player_stint_stats rows in a single round trip.
+ * Prisma's createMany() has no ON CONFLICT DO UPDATE support (only
+ * skipDuplicates, which would silently stop picking up changed source
+ * data), so this hand-builds a multi-row INSERT ... ON CONFLICT DO UPDATE —
+ * same upsert semantics as the row-at-a-time version it replaces, just
+ * batched. Conflict target matches the @@unique([stintId, statKey, scope]).
+ */
+async function batchUpsertStatRows(rows: StatRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  const values = Prisma.join(
+    rows.map(
+      (row) => Prisma.sql`(${randomUUID()}, ${row.stintId}, ${row.statKey}, ${row.statValue}, ${row.scope}, ${row.estimateReason}::"StatEstimateReason")`,
+    ),
+  );
+  await prisma.$executeRaw`
+    INSERT INTO player_stint_stats (id, stint_id, stat_key, stat_value, scope, estimate_reason)
+    VALUES ${values}
+    ON CONFLICT (stint_id, stat_key, scope)
+    DO UPDATE SET stat_value = EXCLUDED.stat_value, estimate_reason = EXCLUDED.estimate_reason
+  `;
+}
 
 // Steals/blocks/turnovers weren't official NBA stats before the 1973-74
 // season; there was no 3-point line at all before 1979-80. Both cutoffs
@@ -86,53 +148,72 @@ async function main() {
   console.log(`Seeding ${NBA_SEED_TEAMS.length} teams...`);
   const teamIdByName = new Map<string, string>();
   for (const seedTeam of NBA_SEED_TEAMS) {
-    const team = await prisma.team.upsert({
-      where: { sport_name: { sport: 'nba', name: seedTeam.name } },
-      update: { colorHex: seedTeam.colorHex },
-      create: { sport: 'nba', name: seedTeam.name, colorHex: seedTeam.colorHex },
-    });
+    const team = await withRetry(`upsert team "${seedTeam.name}"`, () =>
+      prisma.team.upsert({
+        where: { sport_name: { sport: 'nba', name: seedTeam.name } },
+        update: { colorHex: seedTeam.colorHex },
+        create: { sport: 'nba', name: seedTeam.name, colorHex: seedTeam.colorHex },
+      }),
+    );
     teamIdByName.set(seedTeam.name, team.id);
   }
 
-  // Step 2: upsert stint identity rows and their raw stats. Natural key is
+  // Step 2: upsert stint identity rows, collecting their raw stat rows along
+  // the way rather than writing them immediately (see below). Natural key is
   // (sport, team, era, name) — a real person can have multiple stint rows
   // (see nbaStints.ts's LeBron/Ray Allen/Karl Malone examples), so identity
   // is per-stint, not per-person.
   console.log(`Seeding ${NBA_SEED_STINTS.length} player stints...`);
   const stintIdByNaturalKey = new Map<string, string>();
+  const pendingStatRows: StatRow[] = [];
+  let stintsProcessed = 0;
   for (const seedStint of NBA_SEED_STINTS) {
     const teamId = teamIdByName.get(seedStint.team);
     if (!teamId) throw new Error(`Stint "${seedStint.name}" references unknown team "${seedStint.team}"`);
 
-    const stint = await prisma.playerStint.upsert({
-      where: { sport_teamId_era_name: { sport: 'nba', teamId, era: seedStint.era, name: seedStint.name } },
-      update: {
-        personKey: seedStint.personKey,
-        eligiblePositions: seedStint.eligiblePositions,
-        stintStartYear: seedStint.stintStartYear,
-        stintEndYear: seedStint.stintEndYear,
-        isActive: false,
-      },
-      create: {
-        sport: 'nba',
-        personKey: seedStint.personKey,
-        name: seedStint.name,
-        eligiblePositions: seedStint.eligiblePositions,
-        teamId,
-        era: seedStint.era,
-        stintStartYear: seedStint.stintStartYear,
-        stintEndYear: seedStint.stintEndYear,
-        isActive: false,
-      },
-    });
+    const stint = await withRetry(`upsert stint "${seedStint.name}" (${seedStint.team}/${seedStint.era})`, () =>
+      prisma.playerStint.upsert({
+        where: { sport_teamId_era_name: { sport: 'nba', teamId, era: seedStint.era, name: seedStint.name } },
+        update: {
+          personKey: seedStint.personKey,
+          eligiblePositions: seedStint.eligiblePositions,
+          stintStartYear: seedStint.stintStartYear,
+          stintEndYear: seedStint.stintEndYear,
+          isActive: false,
+        },
+        create: {
+          sport: 'nba',
+          personKey: seedStint.personKey,
+          name: seedStint.name,
+          eligiblePositions: seedStint.eligiblePositions,
+          teamId,
+          era: seedStint.era,
+          stintStartYear: seedStint.stintStartYear,
+          stintEndYear: seedStint.stintEndYear,
+          isActive: false,
+        },
+      }),
+    );
     stintIdByNaturalKey.set(`${seedStint.team}|${seedStint.era}|${seedStint.name}`, stint.id);
+    pendingStatRows.push(...statRows(stint.id, seedStint));
 
-    for (const row of statRows(stint.id, seedStint)) {
-      await prisma.playerStintStat.upsert({
-        where: { stintId_statKey_scope: { stintId: row.stintId, statKey: row.statKey, scope: row.scope } },
-        update: { statValue: row.statValue, estimateReason: row.estimateReason },
-        create: row,
-      });
+    stintsProcessed += 1;
+    if (stintsProcessed % PROGRESS_LOG_INTERVAL === 0) {
+      console.log(`  ...${stintsProcessed}/${NBA_SEED_STINTS.length} stints upserted`);
+    }
+  }
+
+  // Step 2b: write every collected stat row in batches (instead of the
+  // previous one-upsert-per-row loop, ~100k individual round trips at 14
+  // rows/stint) — this is the write volume that was actually timing out.
+  console.log(`Writing ${pendingStatRows.length} player_stint_stats rows in batches of ${STAT_BATCH_SIZE}...`);
+  let statRowsWritten = 0;
+  for (let i = 0; i < pendingStatRows.length; i += STAT_BATCH_SIZE) {
+    const batch = pendingStatRows.slice(i, i + STAT_BATCH_SIZE);
+    await withRetry(`batch-upsert stat rows [${i}, ${i + batch.length})`, () => batchUpsertStatRows(batch));
+    statRowsWritten += batch.length;
+    if (statRowsWritten % PROGRESS_LOG_INTERVAL === 0 || statRowsWritten === pendingStatRows.length) {
+      console.log(`  ...${statRowsWritten}/${pendingStatRows.length} stat rows written`);
     }
   }
 
@@ -167,25 +248,33 @@ async function main() {
     NBA_SEED_STINTS.map((seedStint) => [stintIdByNaturalKey.get(`${seedStint.team}|${seedStint.era}|${seedStint.name}`)!, seedStint.usageRate]),
   );
 
+  console.log(`Seeding ${ratings.length} rating rows...`);
+  let ratingsWritten = 0;
   for (const rating of ratings) {
-    await prisma.playerStintRating.upsert({
-      where: { stintId: rating.playerId },
-      update: {
-        baseRating: rating.baseRating,
-        offenseRating: rating.offenseRating,
-        defenseRating: rating.defenseRating,
-        clutchModifier: CLUTCH_MODIFIER_DEFAULT,
-        usageRate: usageRateByStintId.get(rating.playerId)!,
-      },
-      create: {
-        stintId: rating.playerId,
-        baseRating: rating.baseRating,
-        offenseRating: rating.offenseRating,
-        defenseRating: rating.defenseRating,
-        clutchModifier: CLUTCH_MODIFIER_DEFAULT,
-        usageRate: usageRateByStintId.get(rating.playerId)!,
-      },
-    });
+    await withRetry(`upsert rating for stint ${rating.playerId}`, () =>
+      prisma.playerStintRating.upsert({
+        where: { stintId: rating.playerId },
+        update: {
+          baseRating: rating.baseRating,
+          offenseRating: rating.offenseRating,
+          defenseRating: rating.defenseRating,
+          clutchModifier: CLUTCH_MODIFIER_DEFAULT,
+          usageRate: usageRateByStintId.get(rating.playerId)!,
+        },
+        create: {
+          stintId: rating.playerId,
+          baseRating: rating.baseRating,
+          offenseRating: rating.offenseRating,
+          defenseRating: rating.defenseRating,
+          clutchModifier: CLUTCH_MODIFIER_DEFAULT,
+          usageRate: usageRateByStintId.get(rating.playerId)!,
+        },
+      }),
+    );
+    ratingsWritten += 1;
+    if (ratingsWritten % PROGRESS_LOG_INTERVAL === 0) {
+      console.log(`  ...${ratingsWritten}/${ratings.length} ratings upserted`);
+    }
   }
 
   console.log(
