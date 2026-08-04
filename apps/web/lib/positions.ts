@@ -18,61 +18,45 @@ interface StatField {
 }
 
 /**
- * Per-position visible stat line (spec section 8) — display-only, doesn't
- * affect base_rating/offense_rating/defense_rating/clutch_modifier. Full
- * stat line first, headline advanced stat(s) appended last so they render
- * distinctly in the UI.
+ * Canonical stat display order, for every player card regardless of
+ * position — general/offense stats first, then defensive stats, matching
+ * how box scores are typically read. Which stats apply to a given position
+ * is still position-specific (POSITION_STAT_KEYS below); this list is only
+ * what fixes the ORDER they show up in once selected.
  */
-export const POSITION_STAT_FIELDS: Record<NbaPosition, StatField[]> = {
-  PG: [
-    { key: 'ppg', label: 'PPG' },
-    { key: 'apg', label: 'APG' },
-    { key: 'rpg', label: 'RPG' },
-    { key: 'spg', label: 'SPG' },
-    { key: 'tov_pg', label: 'TOV' },
-    { key: 'fg_pct', label: 'FG%', format: 'pct' },
-    { key: 'three_pt_pct', label: '3P%', format: 'pct' },
-  ],
-  SG: [
-    { key: 'ppg', label: 'PPG' },
-    { key: 'three_pt_pct', label: '3P%', format: 'pct' },
-    { key: 'fg_pct', label: 'FG%', format: 'pct' },
-    { key: 'rpg', label: 'RPG' },
-    { key: 'apg', label: 'APG' },
-    { key: 'spg', label: 'SPG' },
-  ],
-  SF: [
-    { key: 'ppg', label: 'PPG' },
-    { key: 'rpg', label: 'RPG' },
-    { key: 'apg', label: 'APG' },
-    { key: 'spg', label: 'SPG' },
-    { key: 'bpg', label: 'BPG' },
-    { key: 'three_pt_pct', label: '3P%', format: 'pct' },
-    { key: 'fg_pct', label: 'FG%', format: 'pct' },
-  ],
-  PF: [
-    { key: 'rpg', label: 'RPG' },
-    { key: 'bpg', label: 'BPG' },
-    { key: 'ppg', label: 'PPG' },
-    { key: 'apg', label: 'APG' },
-    { key: 'spg', label: 'SPG' },
-    { key: 'fg_pct', label: 'FG%', format: 'pct' },
-  ],
-  C: [
-    { key: 'rpg', label: 'RPG' },
-    { key: 'bpg', label: 'BPG' },
-    { key: 'fg_pct', label: 'FG%', format: 'pct' },
-    { key: 'ppg', label: 'PPG' },
-    { key: 'apg', label: 'APG' },
-    { key: 'ft_pct', label: 'FT%', format: 'pct' },
-  ],
-  '6MAN': [
-    { key: 'ppg', label: 'PPG' },
-    { key: 'rpg', label: 'RPG' },
-    { key: 'apg', label: 'APG' },
-    { key: 'fg_pct', label: 'FG%', format: 'pct' },
-  ],
+const STAT_FIELD_ORDER: StatField[] = [
+  { key: 'ppg', label: 'PPG' },
+  { key: 'rpg', label: 'RPG' },
+  { key: 'apg', label: 'APG' },
+  { key: 'fg_pct', label: 'FG%', format: 'pct' },
+  { key: 'three_pt_pct', label: '3P%', format: 'pct' },
+  { key: 'spg', label: 'SPG' },
+  { key: 'bpg', label: 'BPG' },
+  { key: 'ft_pct', label: 'FT%', format: 'pct' },
+  { key: 'tov_pg', label: 'TOV' },
+];
+
+/** Which stats show up on a given position's card (spec section 8) — display-only, doesn't affect base_rating/offense_rating/defense_rating/clutch_modifier. */
+const POSITION_STAT_KEYS: Record<NbaPosition, string[]> = {
+  PG: ['ppg', 'apg', 'rpg', 'spg', 'tov_pg', 'fg_pct', 'three_pt_pct'],
+  SG: ['ppg', 'three_pt_pct', 'fg_pct', 'rpg', 'apg', 'spg'],
+  SF: ['ppg', 'rpg', 'apg', 'spg', 'bpg', 'three_pt_pct', 'fg_pct'],
+  PF: ['rpg', 'bpg', 'ppg', 'apg', 'spg', 'fg_pct'],
+  C: ['rpg', 'bpg', 'fg_pct', 'ppg', 'apg', 'ft_pct'],
+  '6MAN': ['ppg', 'rpg', 'apg', 'fg_pct'],
 };
+
+/**
+ * Per-position visible stat line — POSITION_STAT_KEYS filtered down from
+ * STAT_FIELD_ORDER, so every position's card shows only its own relevant
+ * stats but always in the same fixed sequence.
+ */
+export const POSITION_STAT_FIELDS: Record<NbaPosition, StatField[]> = Object.fromEntries(
+  (Object.keys(POSITION_STAT_KEYS) as NbaPosition[]).map((position) => {
+    const keys = new Set(POSITION_STAT_KEYS[position]);
+    return [position, STAT_FIELD_ORDER.filter((field) => keys.has(field.key))];
+  }),
+) as Record<NbaPosition, StatField[]>;
 
 /**
  * Sort options for the current round's roster (spec 4c) — the round shows
@@ -94,7 +78,7 @@ export const ROUND_SORT_FIELDS: StatField[] = [
 export function formatStatValue(value: number | undefined, format?: 'pct'): string {
   if (value === undefined) return '—';
   if (format === 'pct') return `${Math.round(value * 100)}%`;
-  return String(value);
+  return value.toFixed(1);
 }
 
 /**
