@@ -29,6 +29,8 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
   const [locking, setLocking] = useState(false);
   const [picking, setPicking] = useState(false);
   const [showGameCast, setShowGameCast] = useState(false);
+  const [enteredResults, setEnteredResults] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const refetchState = useCallback(async () => {
     try {
@@ -87,6 +89,18 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
         const chosenPosition = Object.entries(result.match.yourSlots ?? {}).find(([, id]) => id === player.id)?.[0];
         if (chosenPosition) setPickedNames((prev) => ({ ...prev, [chosenPosition]: player.name }));
         setMatch(result.match);
+
+        // Last position filled — lock in automatically and go straight to the
+        // summary screen (spec 4c removed the manual "ready to lock" confirmation step).
+        const rosterFull = NBA_POSITIONS.every((p) => result.match.yourSlots?.[p]);
+        if (rosterFull) {
+          setLocking(true);
+          try {
+            setMatch(await api.lockRoster(rosterId));
+          } finally {
+            setLocking(false);
+          }
+        }
       }
       return result;
     } catch (err) {
@@ -111,29 +125,28 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
     }
   }
 
-  async function handleLock() {
-    if (!rosterId) return;
-    setLocking(true);
-    setError(null);
+  async function handleCopyLink() {
     try {
-      const state = await api.lockRoster(rosterId);
-      setMatch(state);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to lock your roster.');
-    } finally {
-      setLocking(false);
+      await navigator.clipboard.writeText(typeof window !== 'undefined' ? window.location.href : '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError('Could not copy the link — copy it manually from the address bar.');
     }
   }
 
+  // Only marks "seen" once the player has actually clicked into the
+  // simulation (enteredResults) — otherwise the Start/View Simulation label
+  // on the summary screen would flip before they ever looked at it.
   useEffect(() => {
-    if (match?.status === 'complete') {
+    if (enteredResults && match?.status === 'complete') {
       const seenKey = `rd_gamecast_seen_${roomCode}`;
       if (!sessionStorage.getItem(seenKey)) {
         setShowGameCast(true);
         sessionStorage.setItem(seenKey, '1');
       }
     }
-  }, [match?.status, roomCode]);
+  }, [enteredResults, match?.status, roomCode]);
 
   if (error && !match) {
     return (
@@ -157,7 +170,7 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
   const yourRoster = match.yourSide === 'A' ? match.sideA : match.yourSide === 'B' ? match.sideB : null;
   const opponentRoster = match.yourSide === 'A' ? match.sideB : match.yourSide === 'B' ? match.sideA : null;
 
-  if (match.status === 'complete' && match.gameResult) {
+  if (enteredResults && match.status === 'complete' && match.gameResult) {
     if (showGameCast) {
       return (
         <main className="mx-auto max-w-2xl p-6">
@@ -222,22 +235,58 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
   }
 
   if (yourRoster?.isLocked) {
+    const simulationReady = match.status === 'complete' && Boolean(match.gameResult);
+    const seenKey = `rd_gamecast_seen_${roomCode}`;
+    const alreadySeen = typeof window !== 'undefined' && Boolean(sessionStorage.getItem(seenKey));
+
     return (
       <main className="mx-auto max-w-md p-6 text-center">
-        <h1 className="text-xl font-semibold">Roster locked in ✅</h1>
-        <p className="mt-2 text-gray-500">
+        <h1 className="text-xl font-semibold">Your roster</h1>
+        <ul className="mt-3 divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white text-left text-sm">
+          {NBA_POSITIONS.map((pos) => {
+            const drafted = match.yourDraftedPlayers.find((p) => p.position === pos);
+            return (
+              <li key={pos} className="flex items-center justify-between gap-2 px-3 py-2">
+                <span className="font-semibold text-gray-500">{pos}</span>
+                <span className="truncate">{drafted?.name ?? '—'}</span>
+              </li>
+            );
+          })}
+        </ul>
+
+        <p className="mt-4 text-gray-500">
           {opponentRoster?.joined
             ? opponentRoster.isLocked
-              ? 'Both rosters are in — simulating…'
+              ? simulationReady
+                ? 'Your opponent is ready.'
+                : 'Both rosters are in — simulating…'
               : 'Waiting for your opponent to finish drafting.'
             : 'Waiting for an opponent to join. Share this link:'}
         </p>
-        <p className="mt-3 rounded bg-gray-100 p-2 font-mono text-sm">{typeof window !== 'undefined' ? window.location.href : ''}</p>
+
+        <div className="mt-2 flex items-center gap-2 rounded bg-gray-100 p-2">
+          <p className="flex-1 truncate text-left font-mono text-sm">{typeof window !== 'undefined' ? window.location.href : ''}</p>
+          <button
+            type="button"
+            onClick={handleCopyLink}
+            className="shrink-0 rounded bg-orange-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-orange-700"
+          >
+            {copied ? 'Copied!' : 'Copy link'}
+          </button>
+        </div>
+
+        {simulationReady && (
+          <button
+            type="button"
+            onClick={() => setEnteredResults(true)}
+            className="mt-4 w-full rounded bg-orange-600 py-2 font-medium text-white hover:bg-orange-700"
+          >
+            {alreadySeen ? 'View Simulation' : 'Start Simulation'}
+          </button>
+        )}
       </main>
     );
   }
-
-  const filledCount = NBA_POSITIONS.filter((p) => match.yourSlots?.[p]).length;
 
   return (
     <main className="mx-auto max-w-5xl p-6">
@@ -247,6 +296,10 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
           <p className="text-sm text-gray-500">
             Room <span className="font-mono">{roomCode}</span> ·{' '}
             {opponentRoster?.joined ? (opponentRoster.isLocked ? 'Opponent is ready' : 'Opponent is drafting too') : 'Waiting for an opponent to join'}
+            {' · '}
+            <button type="button" onClick={handleCopyLink} className="text-orange-600 underline">
+              {copied ? 'Copied!' : 'Copy invite link'}
+            </button>
           </p>
         </div>
         <div className="text-sm text-gray-600">
@@ -266,18 +319,6 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
         teamRespinUsed={match.yourTeamRespinUsed ?? false}
         eraRespinUsed={match.yourEraRespinUsed ?? false}
       />
-
-      <div className="mt-6 flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4">
-        <p className="text-sm text-gray-500">{filledCount} / 6 positions filled</p>
-        <button
-          type="button"
-          onClick={handleLock}
-          disabled={locking || filledCount < NBA_POSITIONS.length}
-          className="rounded bg-orange-600 px-4 py-2 font-medium text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-        >
-          {locking ? 'Locking…' : 'Lock roster'}
-        </button>
-      </div>
     </main>
   );
 }

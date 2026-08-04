@@ -187,7 +187,7 @@ export default function HomePage() {
           disabled={creating}
           className="mt-4 w-full rounded bg-orange-600 py-2 font-medium text-white hover:bg-orange-700 disabled:opacity-50"
         >
-          {creating ? 'Creating…' : 'Create match'}
+          {creating ? 'Creating…' : 'Create Match & Get Shareable Link'}
         </button>
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       </section>

@@ -3,18 +3,6 @@
 import { ESTIMATE_TOOLTIPS, formatStatValue, POSITION_STAT_FIELDS } from '../lib/positions';
 import { NbaPosition, RoundPlayer } from '../lib/types';
 
-function RatingBar({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="w-16 text-gray-500">{label}</span>
-      <div className="h-1.5 flex-1 rounded-full bg-gray-200">
-        <div className="h-1.5 rounded-full bg-orange-500" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
-      </div>
-      <span className="w-8 text-right font-mono">{Math.round(value)}</span>
-    </div>
-  );
-}
-
 export function PlayerCard({
   player,
   onSelect,
@@ -79,10 +67,6 @@ export function PlayerCard({
             </div>
           );
         })}
-      </div>
-
-      <div className="mt-2 space-y-1">
-        <RatingBar label="Rating" value={player.baseRating} />
       </div>
     </div>
   );

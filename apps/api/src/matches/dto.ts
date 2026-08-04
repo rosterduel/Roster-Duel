@@ -21,6 +21,14 @@ export interface CreateMatchRequest {
   includedTeamIds?: string[];
 }
 
+/** One filled slot on your own roster, for the post-draft summary screen (spec 4c's "go straight from the last pick to a summary showing who you drafted" — needs real data, not the frontend's session-only pick-name cache, since it must survive a reload). */
+export interface DraftedPlayerDto {
+  position: string;
+  id: string;
+  name: string;
+  eligiblePositions: string[];
+}
+
 export interface SideStatusDto {
   joined: boolean;
   isLocked: boolean;
@@ -106,6 +114,8 @@ export interface MatchStateDto {
   sideB: SideStatusDto;
   /** Always visible if you're a participant — it's your own data. */
   yourSlots: Record<string, string> | null;
+  /** Same data as yourSlots, resolved to names — see DraftedPlayerDto. Empty array if you're not a participant or haven't picked anyone yet. */
+  yourDraftedPlayers: DraftedPlayerDto[];
   /** Blind draft: only revealed once BOTH rosters are locked. */
   opponentSlots: Record<string, string> | null;
   /** Your own roster's current round (spec 4c). Null once your roster is locked, has filled every slot (ready to lock, nothing left to roll), or you're not a participant. */

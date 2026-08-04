@@ -8,7 +8,7 @@ import { validateRecapGrounding } from '../recap/validateRecapGrounding';
 import { NBA_POSITIONS, SlottedStint, isNbaPosition, toTeamInput } from '../sim/toTeamInput';
 import { autoFillRosterSlots, RatedCandidate } from './draftAutoFill';
 import { buildPersonKeyToSlot, isAlreadyDrafted, openPositionsForPlayer } from './draftPool';
-import { CreateMatchRequest, CreateMatchResponse, CurrentRoundDto, GameResultDto, MatchStateDto, PickResultDto, RoundPlayerDto, SideStatusDto } from './dto';
+import { CreateMatchRequest, CreateMatchResponse, CurrentRoundDto, DraftedPlayerDto, GameResultDto, MatchStateDto, PickResultDto, RoundPlayerDto, SideStatusDto } from './dto';
 import { MatchesGateway } from './matches.gateway';
 import { generateRoomCode } from './roomCode';
 import { drawEraRespinCombo, drawRandomCombo, drawTeamRespinCombo, hasEraRespinAlternative, hasTeamRespinAlternative, TeamEraCombo } from './slotAssignment';
@@ -283,6 +283,7 @@ export class MatchesService {
     const playerJerseyColors = gameResult ? await this.buildPlayerJerseyColors(match) : null;
 
     const yourCurrentRound = yourRoster && !yourRoster.isLocked ? await this.buildCurrentRound(yourRoster, match) : null;
+    const yourDraftedPlayers = yourRoster ? await this.buildDraftedPlayers(yourRoster.slots as Record<string, string>) : [];
 
     return {
       roomCode: match.roomCode,
@@ -297,6 +298,7 @@ export class MatchesService {
       sideA: toSideStatus(match.rosterA),
       sideB: toSideStatus(match.rosterB),
       yourSlots: yourRoster ? (yourRoster.slots as Record<string, string>) : null,
+      yourDraftedPlayers,
       opponentSlots: bothLocked && opponentRoster ? (opponentRoster.slots as Record<string, string>) : null,
       yourCurrentRound,
       yourTeamRespinUsed: yourRoster?.teamRespinUsed ?? null,
@@ -557,6 +559,20 @@ export class MatchesService {
     if (stintIds.length === 0) return {};
     const stints = await this.prisma.playerStint.findMany({ where: { id: { in: stintIds } }, select: { id: true, team: { select: { colorHex: true } } } });
     return Object.fromEntries(stints.map((s) => [s.id, s.team.colorHex]));
+  }
+
+  /** Resolves a roster's filled slots to display names for the post-draft summary screen (spec 4c) — real data that survives a reload, unlike the frontend's session-only pick-name cache. */
+  private async buildDraftedPlayers(slots: Record<string, string>): Promise<DraftedPlayerDto[]> {
+    const entries = NBA_POSITIONS.map((pos) => [pos, slots[pos]] as const).filter((e) => Boolean(e[1]));
+    if (entries.length === 0) return [];
+    const stints = await this.prisma.playerStint.findMany({ where: { id: { in: entries.map(([, id]) => id) } }, select: { id: true, name: true, eligiblePositions: true } });
+    const stintById = new Map(stints.map((s) => [s.id, s]));
+    return entries
+      .map(([position, id]) => {
+        const stint = stintById.get(id);
+        return { position, id, name: stint?.name ?? '', eligiblePositions: stint?.eligiblePositions ?? [] };
+      })
+      .filter((e) => e.name !== '');
   }
 
   private async loadRosterPlayers(slots: Record<string, string>): Promise<SlottedStint[]> {

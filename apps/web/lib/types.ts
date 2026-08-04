@@ -82,6 +82,14 @@ export interface CurrentRound {
   eraRespinAvailable: boolean;
 }
 
+/** One filled slot on your own roster, for the post-draft summary screen — real data that survives a reload, unlike the client-only pick-name cache. */
+export interface DraftedPlayer {
+  position: NbaPosition;
+  id: string;
+  name: string;
+  eligiblePositions: NbaPosition[];
+}
+
 /** Response from POST roster/:rosterId/pick — either the pick locked immediately, or it's ambiguous and the caller must resubmit with a chosen position (the "Choose Position" prompt). */
 export type PickResult = { status: 'locked'; match: MatchState } | { status: 'choose_position'; eligiblePositions: NbaPosition[] };
 
@@ -218,6 +226,7 @@ export interface MatchState {
   sideA: SideStatus;
   sideB: SideStatus;
   yourSlots: Record<string, string> | null;
+  yourDraftedPlayers: DraftedPlayer[];
   opponentSlots: Record<string, string> | null;
   /** Your own roster's current round — the rolled team+era and its full, unfiltered roster (spec 4c). Null once locked, once every slot is filled (ready to lock), or you're not a participant. */
   yourCurrentRound: CurrentRound | null;
