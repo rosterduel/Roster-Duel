@@ -3,6 +3,24 @@ import { CourtZone, PlayType } from './types';
 export const COURT_WIDTH = 800;
 export const COURT_HEIGHT = 400;
 
+/**
+ * Cropped viewBox showing just the attacking (right) half of the court —
+ * mobile-portrait legibility fix. Every real play's zones live entirely
+ * within x >= 540 (see ZONE_POSITIONS/possession.ts's actual startLocation
+ * values: 'mid_range' 620, 'three_top' 540, 'free_throw_line' 646, plus a
+ * steal's small deflection nudge off any of those), so a left edge of 380
+ * has generous margin and never clips real game action — only the
+ * always-empty decorative left hoop (shown purely for full-court symmetry)
+ * gets cropped out. At the full COURT_WIDTH x COURT_HEIGHT (800x400, a 2:1
+ * aspect), a narrow phone-portrait viewport can only render this ~171px
+ * tall even at full device width, while ~80% of vertical screen space
+ * below it sits unused — cropping to this near-square region roughly
+ * doubles the effective on-screen scale of every sprite/ball/court marking
+ * at that width, with zero letterboxing (420x400 exactly matches the
+ * `aspect-[21/20]` container class GameCastPlayback applies alongside it).
+ */
+export const MOBILE_COURT_VIEWBOX = '380 0 420 400';
+
 export interface Point {
   x: number;
   y: number;
@@ -66,17 +84,24 @@ export const POSE_BY_PLAY_TYPE: Record<PlayType, SpritePose> = {
   offensive_rebound: 'reach',
 };
 
-/** Outcome badge text, timed to pop up when the play resolves (spec 4a). */
-export const OUTCOME_BADGE: Record<PlayType, string> = {
-  three_pointer_made: '+3',
-  two_pointer_made: '+2',
-  three_pointer_missed: 'MISS',
-  two_pointer_missed: 'MISS',
-  free_throw: 'FT',
-  steal: 'STL',
-  turnover: 'TO',
-  block: 'BLOCK',
-  offensive_rebound: 'REB',
+/**
+ * Freeze-frame callout text, shown large and centered over the court for
+ * the beat the ball animation is paused at the outcome moment (GameCast
+ * pacing fix — "Option D"). Replaces the old small in-SVG "+3"/"MISS" badge
+ * that popped up only after the ball had already finished moving; this is
+ * deliberately more exclamatory/broadcast-style since it now IS the primary
+ * signal a play resolved, not a secondary detail near the ball.
+ */
+export const OUTCOME_CALLOUT: Record<PlayType, string> = {
+  three_pointer_made: 'THREE POINTER!',
+  two_pointer_made: 'SCORES!',
+  three_pointer_missed: 'MISSED',
+  two_pointer_missed: 'MISSED',
+  free_throw: 'FREE THROW!',
+  steal: 'STOLEN!',
+  turnover: 'TURNOVER!',
+  block: 'BLOCKED!',
+  offensive_rebound: 'REBOUND',
 };
 
 function lerp(a: Point, b: Point, t: number): Point {

@@ -19,36 +19,30 @@
   animation: round-reveal 300ms ease-out;
 }
 
-/* GameCast (spec 4a): the outcome badge ("+3", "BLOCK", ...) pops up and
-   fades once a play resolves, timed to when the ball animation completes.
-   Lives on an INNER group nested inside a plain positioning <g> — a CSS
-   animation on `transform` would otherwise replace that outer group's
-   SVG `transform` attribute outright rather than combining with it. */
-@keyframes badge-pop {
+/* GameCast pacing fix ("Option D" — freeze-frame + callout): the ball
+   animation pauses at the outcome moment and this large centered callout
+   ("THREE POINTER!", "BLOCKED!", ...) pops in for that hold — replaces the
+   old small in-SVG badge that only appeared after the ball had already
+   finished moving. GameCastPlayback mounts/unmounts this element for
+   exactly the freeze window (JS-timed), so the CSS here only needs the
+   pop-in flourish, not a fade-out or hold duration of its own. */
+@keyframes callout-pop {
   0% {
     opacity: 0;
-    transform: scale(0.6) translateY(6px);
+    transform: scale(0.7) translateY(6px);
   }
-  20% {
+  60% {
     opacity: 1;
-    transform: scale(1.1) translateY(-4px);
-  }
-  35% {
-    transform: scale(1) translateY(0);
-  }
-  80% {
-    opacity: 1;
+    transform: scale(1.08) translateY(-2px);
   }
   100% {
-    opacity: 0;
-    transform: translateY(-14px);
+    opacity: 1;
+    transform: scale(1) translateY(0);
   }
 }
 
-.animate-badge-pop {
-  animation: badge-pop 1.4s ease-out forwards;
-  transform-box: fill-box;
-  transform-origin: center;
+.animate-callout-pop {
+  animation: callout-pop 220ms ease-out;
 }
 
 /* GameCast: the player sprite fades in fresh for each new highlight. Only
@@ -96,7 +90,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .animate-round-reveal,
-  .animate-badge-pop,
+  .animate-callout-pop,
   .animate-sprite-fade-in,
   .animate-shot-hop {
     animation: none;

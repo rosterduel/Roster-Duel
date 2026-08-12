@@ -41,9 +41,16 @@ function CourtEnd({ dir, x0 }: { dir: 1 | -1; x0: number }) {
  * coordinate space, so the ball/sprite overlays line up with the
  * markings without a separate positioning system.
  */
-export function CourtDiagram({ children }: { children?: React.ReactNode }) {
+/**
+ * `viewBox` defaults to the full 800x400 both-hoops court but can be
+ * overridden (e.g. MOBILE_COURT_VIEWBOX) to show only a cropped region —
+ * markings and `children` both live in the same fixed 0..800 x 0..400
+ * coordinate space regardless, so a caller can crop the visible window
+ * without recomputing any positions.
+ */
+export function CourtDiagram({ children, viewBox = `0 0 ${COURT_WIDTH} ${COURT_HEIGHT}` }: { children?: React.ReactNode; viewBox?: string }) {
   return (
-    <svg viewBox={`0 0 ${COURT_WIDTH} ${COURT_HEIGHT}`} className="h-full w-full" style={{ backgroundColor: FLOOR }}>
+    <svg viewBox={viewBox} className="h-full w-full" style={{ backgroundColor: FLOOR }}>
       <rect x={4} y={4} width={792} height={392} fill="none" stroke={CHALK} strokeWidth={3} />
       <line x1={400} y1={4} x2={400} y2={396} stroke={CHALK} strokeWidth={3} />
       <circle cx={400} cy={200} r={44} fill="none" stroke={CHALK} strokeWidth={3} />
