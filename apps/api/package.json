@@ -23,18 +23,18 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
-    "@nestjs/common": "^11.1.28",
-    "@nestjs/core": "^11.1.28",
-    "@nestjs/platform-express": "^11.1.28",
-    "@nestjs/platform-socket.io": "^11.1.28",
-    "@nestjs/websockets": "^11.1.28",
+    "@nestjs/common": "^11.2.11",
+    "@nestjs/core": "^11.2.11",
+    "@nestjs/platform-express": "^11.2.11",
+    "@nestjs/platform-socket.io": "^11.2.11",
+    "@nestjs/websockets": "^11.2.11",
     "@prisma/client": "^6.19.3",
     "@roster-duel/sim-engine": "*",
     "dotenv": "^16.6.1",
     "leo-profanity": "^1.9.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.24",
