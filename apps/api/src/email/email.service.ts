@@ -6,7 +6,7 @@ const RESEND_ENDPOINT = process.env.RESEND_API_URL || 'https://api.resend.com/em
 
 /**
  * Sends email through Resend's HTTP API (plain fetch, no SDK). Needs
- * RESEND_API_KEY and RESEND_FROM (e.g. "RosterDuel <noreply@rosterduel.com>")
+ * RESEND_API_KEY and RESEND_FROM (e.g. "RosterDuel <notifications@mail.rosterduel.com>")
  * on the API service. With either unset, sending is skipped and logged, so
  * the app runs fine before email is set up. Never throws: a failed email
  * must not break a match or a log-in.
