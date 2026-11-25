@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildLeaderboard, computeRecord, LeaderboardEntry, RecordEntry, UserRecord } from './recordStats';
+import { buildMatchHistory, HistorySourceMatch, MatchHistory } from './matchHistory';
 
 const DEFAULT_LEADERBOARD_LIMIT = 20;
 // Spec 9a: minimum games to qualify for ranking, and how far back the
@@ -51,6 +52,42 @@ export class StatsService {
     }
 
     return computeRecord(entries);
+  }
+
+  /** Every finished match this player was in (friend and ranked), newest first, plus their friend-game record. */
+  async getMatchHistory(userId: string): Promise<MatchHistory> {
+    const side = { select: { userId: true, user: { select: { displayName: true } } } };
+    const matches = await this.prisma.match.findMany({
+      where: { status: 'complete', OR: [{ rosterA: { userId } }, { rosterB: { userId } }] },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        roomCode: true,
+        matchType: true,
+        createdAt: true,
+        rosterA: side,
+        rosterB: side,
+        gameResults: { select: { scoreA: true, scoreB: true, recapHeadline: true }, orderBy: { gameNumber: 'desc' }, take: 1 },
+      },
+    });
+
+    const source: HistorySourceMatch[] = [];
+    for (const m of matches) {
+      const [result] = m.gameResults;
+      if (!result) continue;
+      source.push({
+        roomCode: m.roomCode,
+        matchType: m.matchType,
+        createdAt: m.createdAt,
+        sideAUserId: m.rosterA?.userId ?? null,
+        sideBUserId: m.rosterB?.userId ?? null,
+        sideAName: m.rosterA?.user.displayName ?? null,
+        sideBName: m.rosterB?.user.displayName ?? null,
+        scoreA: result.scoreA,
+        scoreB: result.scoreB,
+        headline: result.recapHeadline,
+      });
+    }
+    return buildMatchHistory(userId, source);
   }
 
   async getLeaderboard(limit = DEFAULT_LEADERBOARD_LIMIT): Promise<LeaderboardEntry[]> {

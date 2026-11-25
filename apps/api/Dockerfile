@@ -26,4 +26,9 @@ RUN npm run build -w apps/api
 ENV NODE_ENV=production
 EXPOSE 4000
 
-CMD ["npm", "run", "start:prod", "-w", "apps/api"]
+# Apply any new database migrations before the API starts, so a deploy that
+# adds a migration needs no manual step. `prisma migrate deploy` only runs
+# migrations not yet recorded in _prisma_migrations, so it's a no-op when
+# nothing is new. If it fails, the container exits, the health check never
+# passes, and Railway keeps the previous deployment serving.
+CMD ["sh", "-c", "npm run prisma:deploy -w apps/api && npm run start:prod -w apps/api"]

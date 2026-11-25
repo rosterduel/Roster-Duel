@@ -71,7 +71,7 @@ export default function HomePage() {
         <p className="mt-1 text-gray-500">Draft blind. Simulate the matchup. See who built the better roster.</p>
         <div className="mt-3 flex justify-center gap-4 text-sm">
           <Link href="/profile" className="text-orange-600 underline">
-            Profile
+            Profile &amp; past matches
           </Link>
           <Link href="/leaderboard" className="text-orange-600 underline">
             Leaderboard

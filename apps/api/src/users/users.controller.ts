@@ -4,13 +4,16 @@ import { CurrentUser } from '../session/current-user.decorator';
 import { SessionGuard } from '../session/session.guard';
 import { UsersService } from './users.service';
 
+// Only ever returned to the user it describes (/users/me), so including the
+// account email is fine.
 interface PublicUser {
   id: string;
   displayName: string;
+  email: string | null;
 }
 
 function toPublicUser(user: User): PublicUser {
-  return { id: user.id, displayName: user.displayName };
+  return { id: user.id, displayName: user.displayName, email: user.email ?? null };
 }
 
 @Controller('users')

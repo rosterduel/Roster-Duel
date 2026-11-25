@@ -11,15 +11,20 @@ const MAX_NAME_GENERATION_ATTEMPTS = 5;
 
 export interface RequestWithUser extends Request {
   user: User;
+  /** The X-Session-Token this request came with (needed to log this browser out). */
+  sessionToken: string;
 }
 
 /**
- * Phase 1 has no real auth (spec: "anonymous sessions") — the client
- * generates a random token itself and sends it as X-Session-Token on every
- * request. This guard lazily creates a User row the first time a token is
- * seen and attaches it to the request. Not a security boundary: anyone who
- * learns another session's token can act as that session. Acceptable for a
- * casual friend-match MVP; would need real auth before any real launch.
+ * Every request carries X-Session-Token. Two kinds of token exist:
+ *
+ * - A signed-in browser holds a server-generated token stored in
+ *   auth_sessions (issued at sign-up or log-in, see src/auth). That maps to
+ *   the account's User row.
+ * - Anyone else is an anonymous player: the client generates a random token
+ *   itself, and this guard lazily creates a User row the first time that
+ *   token is seen. Anyone who learns an anonymous token can act as that
+ *   player, which is fine for casual play; accounts are the real identity.
  */
 @Injectable()
 export class SessionGuard implements CanActivate {
@@ -33,7 +38,9 @@ export class SessionGuard implements CanActivate {
       throw new BadRequestException(`Missing or invalid ${SESSION_HEADER} header — the client must generate and send a UUID.`);
     }
 
-    request.user = await this.upsertUser(token);
+    const session = await this.prisma.authSession.findUnique({ where: { token }, include: { user: true } });
+    request.user = session ? session.user : await this.upsertUser(token);
+    request.sessionToken = token;
     return true;
   }
 

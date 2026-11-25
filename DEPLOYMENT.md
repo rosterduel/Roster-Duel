@@ -151,9 +151,11 @@ npm run prisma:deploy -w apps/api
 npm run db:seed -w apps/api
 ```
 
-- `prisma:deploy` runs `prisma migrate deploy` — applies all 8 existing
-  migrations in order, tracked in `_prisma_migrations` so it's safe even if
-  you ever need to run it again.
+- `prisma:deploy` runs `prisma migrate deploy`, which applies any
+  migrations not yet applied, in order, tracked in `_prisma_migrations` so
+  it's safe to run again. Since Nov 2026 the API container also runs it on
+  every start (see `apps/api/Dockerfile`), so later schema changes go live
+  with a normal deploy and need no manual step.
 - `db:seed` reuses the existing `apps/api/prisma/seed.ts` — the same script
   that seeds local dev, writing all 12 teams and 84 player stints via
   `upsert`, so it's also safe to re-run without duplicating data.

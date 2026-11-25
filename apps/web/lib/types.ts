@@ -6,6 +6,31 @@ export type NbaPosition = 'PG' | 'SG' | 'SF' | 'PF' | 'C' | '6MAN';
 export interface PublicUser {
   id: string;
   displayName: string;
+  /** Set once this player has an account; null for an anonymous browser player. */
+  email: string | null;
+}
+
+export interface AuthResult {
+  /** New session token for this browser; replaces the stored one. */
+  token: string;
+  user: PublicUser;
+  movedGames?: number;
+}
+
+export interface MatchHistoryEntry {
+  roomCode: string;
+  matchType: 'friend_link' | 'random_matchmaking';
+  playedAt: string;
+  opponentName: string;
+  yourScore: number;
+  opponentScore: number;
+  result: 'win' | 'loss' | 'self';
+  headline: string | null;
+}
+
+export interface MatchHistory {
+  matches: MatchHistoryEntry[];
+  friendRecord: { gamesPlayed: number; wins: number; losses: number };
 }
 
 export interface UserRecord {

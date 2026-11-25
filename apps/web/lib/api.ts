@@ -1,5 +1,18 @@
 import { getSessionToken } from './session';
-import { CreateMatchRequest, CreateMatchResponse, GameResult, LeaderboardEntry, MatchState, PickResult, PlayerSummary, PublicUser, Team, UserRecord } from './types';
+import {
+  AuthResult,
+  CreateMatchRequest,
+  CreateMatchResponse,
+  GameResult,
+  LeaderboardEntry,
+  MatchHistory,
+  MatchState,
+  PickResult,
+  PlayerSummary,
+  PublicUser,
+  Team,
+  UserRecord,
+} from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
@@ -61,4 +74,12 @@ export const api = {
   getMyRecord: () => request<UserRecord>('/stats/me'),
 
   getLeaderboard: (limit = 20) => request<LeaderboardEntry[]>(`/leaderboard?limit=${limit}`),
+
+  getMyHistory: () => request<MatchHistory>('/stats/me/history'),
+
+  signUp: (email: string, password: string) => request<AuthResult>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) }),
+
+  logIn: (email: string, password: string) => request<AuthResult>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+
+  logOut: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
 };
