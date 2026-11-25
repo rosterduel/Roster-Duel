@@ -122,7 +122,7 @@ links). Without these the app works and simply skips sending:
 
 ```powershell
 railway variable set RESEND_API_KEY=your-resend-key --service api
-railway variable set "RESEND_FROM=RosterDuel <noreply@rosterduel.com>" --service api
+railway variable set "RESEND_FROM=RosterDuel <notifications@mail.rosterduel.com>" --service api
 railway variable set WEB_BASE_URL=https://rosterduel.com --service api
 ```
 
