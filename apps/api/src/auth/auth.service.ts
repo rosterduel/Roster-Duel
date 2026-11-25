@@ -10,6 +10,7 @@ export interface AccountUser {
   id: string;
   displayName: string;
   email: string | null;
+  resultEmails: boolean;
 }
 
 export interface AuthResult {
@@ -21,7 +22,7 @@ export interface AuthResult {
 }
 
 export function toAccountUser(user: User): AccountUser {
-  return { id: user.id, displayName: user.displayName, email: user.email ?? null };
+  return { id: user.id, displayName: user.displayName, email: user.email ?? null, resultEmails: user.resultEmails };
 }
 
 @Injectable()

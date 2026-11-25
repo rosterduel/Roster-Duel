@@ -8,9 +8,10 @@ import { UsersModule } from './users/users.module';
 import { StatsModule } from './stats/stats.module';
 import { TeamsModule } from './teams/teams.module';
 import { AuthModule } from './auth/auth.module';
+import { EmailModule } from './email/email.module';
 
 @Module({
-  imports: [PrismaModule, PlayersModule, MatchesModule, UsersModule, StatsModule, TeamsModule, AuthModule],
+  imports: [PrismaModule, EmailModule, PlayersModule, MatchesModule, UsersModule, StatsModule, TeamsModule, AuthModule],
   controllers: [AppController],
   providers: [AppService],
 })

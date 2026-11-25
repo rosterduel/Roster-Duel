@@ -111,7 +111,7 @@ export default function ProfilePage() {
 }
 
 function AccountSection({ user, onChange }: { user: PublicUser | null; onChange: () => void }) {
-  const [mode, setMode] = useState<'signup' | 'login'>('signup');
+  const [mode, setMode] = useState<'signup' | 'login' | 'forgot'>('signup');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +127,19 @@ function AccountSection({ user, onChange }: { user: PublicUser | null; onChange:
         <p className="mt-2 text-sm">
           Signed in as <span className="font-semibold">{user.email}</span>
         </p>
+        <label className="mt-3 flex items-center gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={user.resultEmails}
+            onChange={(e) =>
+              api
+                .setResultEmails(e.target.checked)
+                .then(onChange)
+                .catch(() => undefined)
+            }
+          />
+          Email me when a matchup is ready
+        </label>
         {notice && <p className="mt-2 text-sm text-green-600">{notice}</p>}
         <button
           type="button"
@@ -142,6 +155,61 @@ function AccountSection({ user, onChange }: { user: PublicUser | null; onChange:
           className="mt-3 rounded border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
         >
           {busy ? 'Logging out…' : 'Log out'}
+        </button>
+      </section>
+    );
+  }
+
+  if (mode === 'forgot') {
+    return (
+      <section className="rounded-lg border border-gray-200 bg-white p-4">
+        <h2 className="text-sm font-semibold text-gray-600">Reset your password</h2>
+        <p className="mt-1 text-xs text-gray-500">Enter your account email and we&apos;ll send you a link to choose a new password.</p>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setError(null);
+            setBusy(true);
+            try {
+              await api.forgotPassword(email);
+              setNotice('If that email has an account, a reset link is on its way. Check your inbox.');
+            } catch (err) {
+              setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.');
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="mt-3 space-y-2"
+        >
+          <input
+            type="email"
+            autoComplete="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full rounded border border-gray-300 p-2 text-sm"
+            required
+          />
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full rounded bg-orange-600 px-3 py-2 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-50"
+          >
+            {busy ? 'Sending…' : 'Send reset link'}
+          </button>
+        </form>
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+        {notice && <p className="mt-2 text-sm text-green-600">{notice}</p>}
+        <button
+          type="button"
+          onClick={() => {
+            setMode('login');
+            setError(null);
+            setNotice(null);
+          }}
+          className="mt-3 text-sm text-orange-600 underline"
+        >
+          Back to log in
         </button>
       </section>
     );
@@ -218,6 +286,19 @@ function AccountSection({ user, onChange }: { user: PublicUser | null; onChange:
       >
         {mode === 'signup' ? 'Already have an account? Log in' : 'New here? Create an account'}
       </button>
+      {mode === 'login' && (
+        <button
+          type="button"
+          onClick={() => {
+            setMode('forgot');
+            setError(null);
+            setNotice(null);
+          }}
+          className="ml-4 mt-3 text-sm text-gray-500 underline"
+        >
+          Forgot password?
+        </button>
+      )}
     </section>
   );
 }

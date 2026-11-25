@@ -82,4 +82,15 @@ export const api = {
   logIn: (email: string, password: string) => request<AuthResult>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
 
   logOut: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+
+  forgotPassword: (email: string) => request<{ ok: true }>('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+
+  resetPassword: (token: string, password: string) =>
+    request<AuthResult>('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) }),
+
+  setResultEmails: (enabled: boolean) => request<PublicUser>('/users/me/result-emails', { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+
+  /** Guest "email me when it's ready" for one match; an empty email clears it. */
+  setNotifyEmail: (rosterId: string, email: string) =>
+    request<{ notifyEmail: string | null }>(`/matches/roster/${rosterId}/notify`, { method: 'POST', body: JSON.stringify({ email }) }),
 };

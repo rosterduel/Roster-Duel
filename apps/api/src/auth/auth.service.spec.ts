@@ -45,7 +45,7 @@ function fakePrisma(users: User[], rosters: { id: string; userId: string }[] = [
 }
 
 function user(overrides: Partial<User>): User {
-  return { id: 'u1', sessionToken: 'tok-1', displayName: 'Player 1', createdAt: new Date(), email: null, passwordHash: null, ...overrides };
+  return { id: 'u1', sessionToken: 'tok-1', displayName: 'Player 1', createdAt: new Date(), email: null, passwordHash: null, resultEmails: true, ...overrides };
 }
 
 describe('AuthService', () => {
@@ -56,7 +56,7 @@ describe('AuthService', () => {
 
     const result = await service.signUp(me, ' Jeff@Example.com ', 'longenough');
 
-    expect(result.user).toEqual({ id: 'u1', displayName: 'Player 1', email: 'jeff@example.com' });
+    expect(result.user).toEqual({ id: 'u1', displayName: 'Player 1', email: 'jeff@example.com', resultEmails: true });
     expect(prisma.sessions).toEqual([{ token: result.token, userId: 'u1' }]);
     expect(me.sessionToken).not.toBe('tok-1');
     expect(me.passwordHash).toMatch(/^scrypt\$/);

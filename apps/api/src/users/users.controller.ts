@@ -10,10 +10,12 @@ interface PublicUser {
   id: string;
   displayName: string;
   email: string | null;
+  /** Whether "your matchup is ready" emails go to the account email. */
+  resultEmails: boolean;
 }
 
 function toPublicUser(user: User): PublicUser {
-  return { id: user.id, displayName: user.displayName, email: user.email ?? null };
+  return { id: user.id, displayName: user.displayName, email: user.email ?? null, resultEmails: user.resultEmails };
 }
 
 @Controller('users')
@@ -29,6 +31,12 @@ export class UsersController {
   @Patch('me/display-name')
   async changeDisplayName(@CurrentUser() user: User, @Body() body: { displayName?: string }): Promise<PublicUser> {
     const updated = await this.users.changeDisplayName(user, body?.displayName ?? '');
+    return toPublicUser(updated);
+  }
+
+  @Patch('me/result-emails')
+  async setResultEmails(@CurrentUser() user: User, @Body() body: { enabled?: unknown }): Promise<PublicUser> {
+    const updated = await this.users.setResultEmails(user, body?.enabled === true);
     return toPublicUser(updated);
   }
 }

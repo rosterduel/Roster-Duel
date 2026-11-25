@@ -145,19 +145,11 @@ still impractically slow even after the JSON split).
 
 ## Deferred features
 
-- **Password reset.** Accounts (email + password, added Nov 2026) have no
-  "forgot password" flow yet, because it needs to send email. It arrives
-  with the result-ready email below, on the same sender. Until then a
+- **Email needs Resend set up.** Result-ready emails ("Run your
+  simulation") and password-reset emails are built (Nov 2026) but only
+  send once RESEND_API_KEY and RESEND_FROM are set on the API service (see
+  DEPLOYMENT.md 1d). Until then both are skipped and logged, and a
   forgotten password can only be reset by hand in the database.
-- **Result-ready notifications.** When a match's simulation becomes
-  available (both players have drafted), the waiting player currently has
-  no way to know except manually checking the link again. Planned
-  approach: the optional account (email/password, now built; drafting itself
-  stays fully anonymous/optional) + a "you'll be emailed when it's ready" prompt
-  shown when the invite link is copied, using Resend (free tier, 3,000
-  emails/month) for sending. Browser push notifications considered and
-  deferred separately — meaningfully harder to implement well (service
-  workers, permission prompts) and notably inconsistent on iPhone Safari.
-  Not needed for current family/friends testing phase; revisit once the
-  player base grows beyond people who'll remember to check back on their
-  own.
+- **Browser push notifications.** Considered alongside the result email
+  and deferred: meaningfully harder to do well (service workers,
+  permission prompts) and notably inconsistent on iPhone Safari.

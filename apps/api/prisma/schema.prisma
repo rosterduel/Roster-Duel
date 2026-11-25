@@ -252,9 +252,13 @@ model User {
   // src/auth/password.ts), never the password itself.
   email        String?  @unique
   passwordHash String?  @map("password_hash")
+  // Account holders get the "your matchup is ready" email unless they turn
+  // it off on their profile.
+  resultEmails Boolean  @default(true) @map("result_emails")
 
-  rosters      Roster[]
-  authSessions AuthSession[]
+  rosters        Roster[]
+  authSessions   AuthSession[]
+  passwordResets PasswordReset[]
 
   @@map("users")
 }
@@ -271,6 +275,22 @@ model AuthSession {
 
   @@index([userId])
   @@map("auth_sessions")
+}
+
+// One "forgot password" link. Only a SHA-256 of the token is stored, so a
+// database leak can't be used to reset anyone's password. Single use,
+// short-lived (see src/auth/passwordReset.service.ts).
+model PasswordReset {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("password_resets")
 }
 
 // One roster per user per match side (spec: `rosters.slots` is a JSONB
@@ -319,6 +339,10 @@ model Roster {
   // when this is null.
   draftDeadline DateTime? @map("draft_deadline")
   createdAt     DateTime  @default(now()) @map("created_at")
+  // A guest's "email me when it's ready" address for this one match.
+  // Cleared once the email is sent. Account holders use their account
+  // email instead (User.resultEmails).
+  notifyEmail   String?   @map("notify_email")
 
   matchAsA Match? @relation("MatchRosterA")
   matchAsB Match? @relation("MatchRosterB")

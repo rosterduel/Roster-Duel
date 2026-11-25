@@ -117,6 +117,20 @@ railway variable set ANTHROPIC_API_KEY=your-key-here --service api
 (This is entering a secret into Railway's own variable store via its CLI —
 not pasting it into our chat, which is the thing you asked to avoid.)
 
+Optional, for email (the "your matchup is ready" email and password-reset
+links). Without these the app works and simply skips sending:
+
+```powershell
+railway variable set RESEND_API_KEY=your-resend-key --service api
+railway variable set "RESEND_FROM=RosterDuel <noreply@rosterduel.com>" --service api
+railway variable set WEB_BASE_URL=https://rosterduel.com --service api
+```
+
+- `RESEND_FROM` must use a domain you've verified in Resend (it gives you
+  a few DNS records to add for rosterduel.com).
+- `WEB_BASE_URL` is where links in emails point. Leave it unset until the
+  site is public; it then falls back to the Vercel URL.
+
 ### 1e. Give the API its own domain
 
 ```powershell

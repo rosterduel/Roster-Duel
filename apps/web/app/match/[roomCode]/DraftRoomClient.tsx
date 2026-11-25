@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { ApiError, api } from '../../../lib/api';
 import { PickResult, RoundPlayer } from '../../../lib/types';
@@ -13,11 +13,12 @@ import { GameCastPlayback } from '../../../components/GameCastPlayback';
 import { BoxScoreTable } from '../../../components/BoxScoreTable';
 import { HighlightsList } from '../../../components/HighlightsList';
 import { NewspaperRecap } from '../../../components/NewspaperRecap';
+import { NotifyPrompt } from '../../../components/NotifyPrompt';
 
 const POLL_INTERVAL_MS = 4000;
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
-export function DraftRoomClient({ roomCode }: { roomCode: string }) {
+export function DraftRoomClient({ roomCode, autoPlay = false }: { roomCode: string; autoPlay?: boolean }) {
   const [match, setMatch] = useState<MatchState | null>(null);
   const [rosterId, setRosterId] = useState<string | null>(null);
   // Best-effort, this-session-only record of what got picked into each
@@ -134,6 +135,18 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
       setError('Could not copy the link — copy it manually from the address bar.');
     }
   }
+
+  // Opened from the email's "Run your simulation" button: go straight into
+  // the game cast once the result has loaded, once per page load.
+  const autoPlayed = useRef(false);
+  useEffect(() => {
+    if (autoPlay && !autoPlayed.current && match?.status === 'complete' && match.gameResult) {
+      autoPlayed.current = true;
+      setEnteredResults(true);
+      setShowGameCast(true);
+      sessionStorage.setItem(`rd_gamecast_seen_${roomCode}`, '1');
+    }
+  }, [autoPlay, match?.status, match?.gameResult, roomCode]);
 
   // Only marks "seen" once the player has actually clicked into the
   // simulation (enteredResults) — otherwise the Start/View Simulation label
@@ -274,6 +287,8 @@ export function DraftRoomClient({ roomCode }: { roomCode: string }) {
             {copied ? 'Copied!' : 'Copy link'}
           </button>
         </div>
+
+        {!simulationReady && <NotifyPrompt rosterId={rosterId ?? match.yourRosterId} />}
 
         {simulationReady && (
           <button

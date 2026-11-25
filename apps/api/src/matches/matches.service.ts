@@ -1,6 +1,11 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Match, Roster, User } from '@prisma/client';
 import { GameResult as SimGameResult, simulateGame } from '@roster-duel/sim-engine';
+import { checkEmailAddress } from '../auth/credentials';
+import { EmailService } from '../email/email.service';
+import { resultEmailRecipients, RecipientSide } from '../email/resultRecipients';
+import { resultReadyEmail } from '../email/templates';
+import { webBaseUrl } from '../email/webBaseUrl';
 import { PrismaService } from '../prisma/prisma.service';
 import { createAnthropicRecapGenerator } from '../recap/anthropicRecapGenerator';
 import { generateGameRecap, toRecapPromptInput } from '../recap/generateGameRecap';
@@ -30,6 +35,7 @@ export class MatchesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: MatchesGateway,
+    private readonly email: EmailService,
   ) {}
 
   async createMatch(user: User, options?: CreateMatchRequest): Promise<CreateMatchResponse> {
@@ -363,6 +369,45 @@ export class MatchesService {
     return match;
   }
 
+  /** A guest's "email me when it's ready" for this match. An empty email clears it. */
+  async setNotifyEmail(rosterId: string, user: User, rawEmail: unknown): Promise<{ notifyEmail: string | null }> {
+    const roster = await this.getOwnedRosterOrThrow(rosterId, user);
+    let notifyEmail: string | null = null;
+    if (typeof rawEmail === 'string' && rawEmail.trim() !== '') {
+      const checked = checkEmailAddress(rawEmail);
+      if (!checked.valid) throw new BadRequestException(checked.reason);
+      notifyEmail = checked.email;
+    }
+    await this.prisma.roster.update({ where: { id: roster.id }, data: { notifyEmail } });
+    return { notifyEmail };
+  }
+
+  /** Sends "your matchup is ready" to whoever asked for it, then forgets any guest address. */
+  private async sendResultReadyEmails(matchId: string): Promise<void> {
+    const match = await this.prisma.match.findUniqueOrThrow({
+      where: { id: matchId },
+      include: { rosterA: { include: { user: true } }, rosterB: { include: { user: true } } },
+    });
+    if (!match.rosterA || !match.rosterB) return;
+
+    const toSide = (roster: Roster & { user: User }): RecipientSide => ({
+      displayName: roster.user.displayName,
+      accountEmail: roster.user.email,
+      resultEmails: roster.user.resultEmails,
+      guestNotifyEmail: roster.notifyEmail,
+    });
+    const recipients = resultEmailRecipients(toSide(match.rosterA), toSide(match.rosterB));
+    const url = `${webBaseUrl()}/match/${match.roomCode}?play=1`;
+    for (const r of recipients) {
+      await this.email.send(r.email, resultReadyEmail(r.opponentName, url));
+    }
+
+    await this.prisma.roster.updateMany({
+      where: { id: { in: [match.rosterA.id, match.rosterB.id] }, notifyEmail: { not: null } },
+      data: { notifyEmail: null },
+    });
+  }
+
   private async getOwnedRosterOrThrow(rosterId: string, user: User): Promise<Roster> {
     const roster = await this.prisma.roster.findUnique({ where: { id: rosterId } });
     if (!roster) throw new NotFoundException('Roster not found.');
@@ -500,6 +545,9 @@ export class MatchesService {
     });
 
     await this.prisma.match.update({ where: { id: match.id }, data: { status: 'complete' } });
+
+    // Fire-and-forget like the recap: an email problem never holds up the result.
+    this.sendResultReadyEmails(match.id).catch((err) => this.logger.warn(`Result-ready email failed for match ${match.roomCode}: ${err}`));
 
     if (process.env.ANTHROPIC_API_KEY) {
       // Fire-and-forget: a missing/slow recap should never block the game

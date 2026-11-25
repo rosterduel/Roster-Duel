@@ -25,4 +25,8 @@ export class UsersService {
       throw err;
     }
   }
+
+  setResultEmails(user: User, enabled: boolean): Promise<User> {
+    return this.prisma.user.update({ where: { id: user.id }, data: { resultEmails: enabled } });
+  }
 }

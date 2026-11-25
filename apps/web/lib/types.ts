@@ -8,6 +8,8 @@ export interface PublicUser {
   displayName: string;
   /** Set once this player has an account; null for an anonymous browser player. */
   email: string | null;
+  /** Whether "your matchup is ready" emails go to the account email. */
+  resultEmails: boolean;
 }
 
 export interface AuthResult {

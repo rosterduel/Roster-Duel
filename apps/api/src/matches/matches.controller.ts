@@ -41,6 +41,12 @@ export class MatchesController {
     return this.matches.lockRoster(rosterId, user);
   }
 
+  /** Guest "email me when it's ready" for this match; send an empty email to clear it. */
+  @Post('roster/:rosterId/notify')
+  setNotifyEmail(@Param('rosterId') rosterId: string, @CurrentUser() user: User, @Body() body: { email?: unknown }): Promise<{ notifyEmail: string | null }> {
+    return this.matches.setNotifyEmail(rosterId, user, body?.email);
+  }
+
   @Post(':roomCode/recap')
   regenerateRecap(@Param('roomCode') roomCode: string): Promise<GameResultDto> {
     return this.matches.regenerateRecap(roomCode);
